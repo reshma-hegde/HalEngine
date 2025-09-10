@@ -1,0 +1,7 @@
+fun main()
+    @ this is a comment
+    var a = 5;
+    a++;
+    @ another comment here
+    return a;
+nuf

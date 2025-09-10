@@ -1,0 +1,21 @@
+class Counter
+    var value;
+
+    fun init()
+        this.value = 0;
+        return 1;
+    nuf
+
+    fun inc()
+        this.value = this.value + 1;
+        return 1;
+    nuf
+ssalc
+
+fun main()
+    var c = Counter();
+    c.inc();
+    c.inc();
+    print("Counter = ", c.value);
+    return 1;
+nuf

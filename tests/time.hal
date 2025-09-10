@@ -1,0 +1,16 @@
+fun main()
+    var x = 10;
+    var y=1;
+    print("x = ", x);
+    x = 20;
+    y=100;
+    print("x = ", x);
+
+    rewind 2;
+    print("After rewind: x = ", x);
+    
+    fastforward 1;
+    print("After fastforward: x = ", x);
+
+    return 0;
+nuf

@@ -1,0 +1,12 @@
+fun main()
+var i = 0;
+var sum = 0;
+
+while i < 5
+    sum += i;
+    print("i =",i,"  sum = ", sum);
+    i += 1;
+elihw
+
+return sum;
+nuf

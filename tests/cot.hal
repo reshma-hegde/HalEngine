@@ -1,0 +1,11 @@
+fun main()
+    var pi = 3.14159265d;
+    var angle = pi / 6d;  
+
+    var cs = cosec(angle);
+    var sc = sec(angle);
+    var ct = cot(angle);
+
+    print("cosec:", cs, " sec:", sc, " cot:", ct);
+    return 0;
+nuf

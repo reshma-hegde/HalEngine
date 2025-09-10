@@ -1,0 +1,12 @@
+struct Person
+    var age;
+    var height;
+tcurts
+
+fun main()
+    var p = Person();
+    p.age = 25;
+    p.height = 180;
+    print("Person: age=",p.age,", height=",p.height); 
+    return 0;
+nuf

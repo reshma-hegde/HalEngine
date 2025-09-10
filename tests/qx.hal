@@ -1,0 +1,14 @@
+fun main()
+    qubit q1;
+    H(q1);          
+    print("Before X:");
+    var r = measure q1;
+    print("q1:", r);
+
+    X(q1);         
+    print("After X:");
+    r = measure q1;
+    print("q1:", r);
+
+    return 0;
+nuf

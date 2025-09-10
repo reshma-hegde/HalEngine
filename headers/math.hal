@@ -1,0 +1,171 @@
+fun add(var a, var b)
+    return a + b;
+nuf
+
+fun sub(var a, var b)
+    return a - b;
+nuf
+
+fun mul(var a, var b)
+    return a * b;
+nuf
+
+fun div(var a, var b)
+    return a / b;
+nuf
+
+fun mod(var a, var b)  
+    return a % b;
+nuf
+
+fun max(var a, var b)
+    if a > b
+        return a;
+    fi
+    return b;
+nuf
+
+fun min(var a, var b)
+    if a < b
+        return a;
+    fi
+    return b;
+nuf
+
+fun abs(var a)
+    if a < 0
+        return -a;
+    fi
+    return a;
+nuf
+
+fun pow(var base, var exp)
+    var result = 1;
+    var i = 0;
+    while i < exp
+        result = result * base;
+        i = i + 1;
+    elihw
+    return result;
+nuf
+
+fun isEven(var a)
+if a%2!=0
+return 0;
+fi
+else
+return 1;
+esle
+ 
+nuf
+
+
+
+
+fun gcd(var a, var b)
+    while b != 0
+        var temp = b;
+        b = a % b;
+        a = temp;
+    elihw
+    return a;
+nuf
+
+fun addArray(array arr, var size)
+    var total = 0;
+    var i = 0;
+    while i < size
+        total = total + arr[i];
+        i = i + 1;
+    elihw
+    return total;
+nuf
+
+fun subArray(array arr, var size)
+    if size == 0 return 0; fi
+    var total = arr[0];
+    var i = 1;
+    while i < size
+        total = total - arr[i];
+        i = i + 1;
+    elihw
+    return total;
+nuf
+
+fun mulArray(array arr, var size)
+    var total = 1;
+    var i = 0;
+    while i < size
+        total = total * arr[i];
+        i = i + 1;
+    elihw
+    return total;
+nuf
+
+fun divArray(array arr, var size)
+    if size == 0 return 0; fi
+    var total = arr[0];
+    var i = 1;
+    while i < size
+        total = total / arr[i];
+        i = i + 1;
+    elihw
+    return total;
+nuf
+
+
+fun maxArray(array arr, var size)
+    var m = arr[0];
+    var i = 1;
+    while i < size
+        if arr[i] > m
+            m = arr[i];
+        fi
+        i = i + 1;
+    elihw
+    return m;
+nuf
+
+fun minArray(array arr, var size)
+    var m = arr[0];
+    var i = 1;
+    while i < size
+        if arr[i] < m
+            m = arr[i];
+        fi
+        i = i + 1;
+    elihw
+    return m;
+nuf
+
+
+
+
+
+
+fun gcdArray(array arr, var size)
+    if size == 0 return 0; fi
+    var result = arr[0];
+    var i = 1;
+    while i < size
+        var a = result;
+        var b = arr[i];
+        while b != 0
+            var temp = b;
+            b = a % b;
+            a = temp;
+        elihw
+        result = a;
+        i = i + 1;
+    elihw
+    return result;
+nuf
+
+fun insert(array arr, var length, var index, var value)
+    var i = length - 1;
+    while i >= index
+        arr[i + 1] = arr[i];
+        i = i - 1;
+    elihw
+    arr[index] = value;
+nuf

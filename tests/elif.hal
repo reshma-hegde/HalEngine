@@ -1,0 +1,13 @@
+fun main()
+    var x = 5;
+
+    if x == 1
+        print("x is 1");
+    elif x == 5
+        print("x is 5");
+    else
+        print("x is something else");
+    esle
+
+    return 0;
+nuf

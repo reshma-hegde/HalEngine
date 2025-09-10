@@ -1,0 +1,21 @@
+fun main()
+    qubit q1;
+
+    print("Initial state measurement:");
+    var r0 = measure q1;
+    print("q1:", r0);
+
+    H(q1);        
+    S(q1);        
+
+    var r1 = measure q1;
+    print("After H + S measurement:");
+    print("q1:", r1);
+
+    H(q1);        
+    var r2 = measure q1;
+    print("After H + S + H measurement:");
+    print("q1:", r2);
+
+    return 0;
+nuf

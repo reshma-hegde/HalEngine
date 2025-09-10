@@ -1,0 +1,18 @@
+fun add(var x,var y)
+    return x + y;
+nuf
+
+
+fun main()
+    var result = add(1.5,4.5);
+    var a=10;
+    print(result);
+    var c=3.14;
+    var d=4.3+c;
+    a--;
+    a++;
+    
+    print(a);
+    return d;
+nuf
+@there is no difference whne there's no different

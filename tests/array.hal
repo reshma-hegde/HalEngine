@@ -1,0 +1,12 @@
+fun main()
+    array a = [1,2,3,4,4,5,6,6,64433];
+    
+    var b = a[8];
+    var c = a[0];
+    var d = b + c;
+    print("First element:",a[0]);
+    var q = a[0] + a[1] + a[2];
+    print("Third element:",a[2]);
+    print("addition of a first three elements:",q);
+    return b;
+nuf

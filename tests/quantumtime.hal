@@ -1,0 +1,26 @@
+fun main()
+    qubit q1;
+    H(q1);
+    var r1 = measure q1;
+    fork
+        
+       H(q1);
+       r1=measure q1;
+    or
+ 
+        H(q1);
+        H(q1);
+        r1=measure q1;
+        
+    merge timelines;
+
+    var i = 0;
+    var c = len(timelines);
+    while i < c
+        
+        print("Timeline", i, "q1:",timelines[i]);
+        i++;
+    elihw
+
+    return 0;
+nuf

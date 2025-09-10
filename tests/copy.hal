@@ -1,0 +1,20 @@
+fun main()
+    var a = reserve(4 * 3);
+    var b = reserve(4 * 3);
+
+    deref(a) = 11;
+    deref(a + 1) = 22;
+    deref(a + 2) = 33;
+
+    var i = 0;
+    while i < 3
+        deref(b + i) = deref(a + i);
+        i = i + 1;
+    elihw
+
+    print( deref(b), deref(b + 1), deref(b + 2));
+
+    free(a);
+    free(b);
+    return 0;
+nuf

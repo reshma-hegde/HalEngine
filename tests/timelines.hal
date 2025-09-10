@@ -1,0 +1,20 @@
+fun main()
+    var timeline = 1;
+    fork
+        timeline = timeline + 1;
+    or
+        timeline = timeline * 3;
+    or
+        timeline = timeline +200;
+    merge timelines;
+    print("Possible timelines:");
+    var i=0;
+    var c=len(timelines);
+    while i<c
+    print(i,"=",timelines[i]);
+    i++;
+    
+    elihw
+    print(timeline);
+    return 0;
+nuf

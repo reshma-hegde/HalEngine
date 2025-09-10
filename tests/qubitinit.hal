@@ -1,0 +1,21 @@
+fun main()
+   
+    qubit a;           
+    qubit b = |1>;     
+
+    H(a);              
+    X(b);             
+
+
+    var m_a = measure a;
+    var m_b = measure b;
+    print("Before reset: a=", m_a, " b=", m_b);
+
+
+    reset a;           
+    reset b = |1>;     
+    m_a = measure a;
+    m_b = measure b;
+    print("After reset: a=", m_a, " b=", m_b);
+    return 0;
+nuf

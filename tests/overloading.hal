@@ -1,0 +1,34 @@
+class Math
+    fun add(var a, var b)
+        return a + b;
+    nuf
+
+    fun add(var a, var b, var c)
+        return a + b + c;
+    nuf
+
+    fun mul(var a, var b)
+        return a * b;
+    nuf
+
+    fun mul(var a, var b, var c)
+        return a * b * c;
+    nuf
+ssalc
+
+fun main()
+    var m = Math();
+
+    var x = m.add(2, 3);        
+    var y = m.add(1, 2, 3);     
+
+    var p = m.mul(4, 5);
+    var q = m.mul(2, 3, 4);     
+
+    print("add(2,3) = ", x);
+    print("add(1,2,3) =", y);
+    print("mul(4,5) = ", p);
+    print("mul(2,3,4) = ", q);
+
+    return 0;
+nuf

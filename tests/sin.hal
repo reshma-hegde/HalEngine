@@ -1,0 +1,11 @@
+fun main()
+    var pi = 3.14159265d;
+    var angle = pi / 3d;
+
+    var s = sin(angle);
+    var c = cos(angle);
+    var t = tan(angle);
+
+    print("sin:", s, " cos:", c, " tan:", t);
+    return 0;
+nuf

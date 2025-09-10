@@ -1,0 +1,22 @@
+class Point
+    var x;
+    var y;
+
+    fun init(var a, var b)
+        this.x = a;
+        this.y = b;
+        return 0;
+    nuf
+
+    fun length()
+        var d = this.x * this.x + this.y * this.y;
+        return d;
+    nuf
+ssalc
+
+fun main()
+    var p = Point(3, 4);   
+    var l = p.length();
+    print("Length squared = ", l);
+    return 0;
+nuf

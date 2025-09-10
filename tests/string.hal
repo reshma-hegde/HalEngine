@@ -1,0 +1,12 @@
+fun main()
+    
+    print("Enter your name: ");
+    var name = input();
+
+    print("Enter your age: ");
+    var age = input();
+    
+    print("Hello,", name);
+    print("You are", age, "years old.");
+    return 0;
+nuf

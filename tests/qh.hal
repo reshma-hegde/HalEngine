@@ -1,0 +1,20 @@
+fun main()
+    qubit q1;
+    qubit q2;
+    H(q1);
+    var r1 = measure q1;
+    var r2 = measure q2;
+    print("before (2 H)");
+    print("q1:", r1);
+    print("q2:", r2);
+
+    H(q1);   
+    H(q1);   
+
+    r1 = measure q1;
+    r2 = measure q2;
+    print("after (2 H)");
+    print("q1:", r1);
+    print("q2:", r2);
+    return 0;
+nuf

@@ -1,0 +1,41 @@
+class Rectangle
+    var width;
+    var height;
+
+
+    fun init()
+        this.width = 1;
+        this.height = 1;
+        return 0;
+    nuf
+
+
+    fun init(var s)
+        this.width = s;
+        this.height = s;
+        return 0;
+    nuf
+
+    
+    fun init(var w, var h)
+        this.width = w;
+        this.height = h;
+        return 0;
+    nuf
+
+    fun area()
+        return this.width * this.height;
+    nuf
+ssalc
+
+fun main()
+    var r1 = Rectangle();        
+    var r2 = Rectangle(5);      
+    var r3 = Rectangle(2, 10);  
+
+    print("Area r1 = ", r1.area());
+    print("Area r2 = ", r2.area());
+    print("Area r3 = ", r3.area());
+
+    return 0;
+nuf

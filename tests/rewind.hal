@@ -1,0 +1,25 @@
+fun main()
+    var a = 5;
+    var b = 10;
+
+    print("a =", a);
+    print("b =", b);
+
+    a = a + b;
+    print("a after add =", a);
+
+    b = b * 2;
+    print("b after mul =", b);
+
+    a=12;
+    b=1;
+
+    rewind 1;  
+    print("After rewind: a = ", a,"and b=",b);
+    
+
+    fastforward 2; 
+    print("After fastforward: a = ", a,"and b=",b);
+   
+    return 0;
+nuf

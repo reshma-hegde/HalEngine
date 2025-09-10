@@ -1,0 +1,12 @@
+struct Point
+    var x;
+    var y;
+tcurts
+
+fun main()
+    var p = Point();
+    p.x = 10;
+    p.y = 20;
+    print("Point coordinates: (", p.x,",",p.y,")");
+    return 0;
+nuf

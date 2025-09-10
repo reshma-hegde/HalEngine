@@ -1,0 +1,33 @@
+class Point
+    var x;
+    var y;
+
+
+    fun init()
+        this.x = 0;
+        this.y = 0;
+        return 0;
+    nuf
+
+
+    fun init(var a, var b)
+        this.x = a;
+        this.y = b;
+        return 0;
+    nuf
+
+    fun length()
+        var d = this.x * this.x + this.y * this.y;
+        return d;
+    nuf
+ssalc
+
+fun main()
+    var p1 = Point();       
+    var p2 = Point(3, 4);   
+
+    print("Length(p1) = ", p1.length());
+    print("Length(p2) = ", p2.length());
+
+    return 0;
+nuf

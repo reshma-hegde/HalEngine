@@ -1,0 +1,9 @@
+fun pop(array a, var length)
+    var last_index = length - 1;
+    var last_value = a[last_index];
+    return last_value;
+nuf
+
+fun push(array a, var length, var value)
+    a[length] = value;
+nuf

@@ -1,0 +1,10 @@
+fun main()
+    var a = 15;
+    a++;
+    a++;
+    print( a);
+    a--;
+    print(a);
+    a--;
+    return a;
+nuf

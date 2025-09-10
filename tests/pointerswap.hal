@@ -1,0 +1,18 @@
+fun main()
+    var x = reserve(4 * 1);
+    var y = reserve(4 * 1);
+
+    deref(x) = 123;
+    deref(y) = 456;
+
+    print("Before: x ", deref(x)," and y ", deref(y));
+
+    var tmp = x;
+    x = y;
+    y = tmp;
+
+    print("After: x ", deref(x)," and y ", deref(y));
+    free(x);
+    free(y);
+    return 0;
+nuf

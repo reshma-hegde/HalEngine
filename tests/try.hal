@@ -1,0 +1,24 @@
+
+fun risky_divide(var a,var b)
+    if b == 0
+        print("Division by zero!");
+        return 0;
+    fi
+    return a / b;
+nuf
+
+fun main()
+    var x = 10;
+    var y = 0;
+    var result = 0;
+
+    branch
+        result = risky_divide(x, y);
+    handle e
+        print("Error occurred: "+ e);
+        result = 0;
+    end
+
+    print("Result: "+ result);
+    return 0;
+nuf

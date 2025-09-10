@@ -1,0 +1,12 @@
+fun main()
+    var p = reserve(4 * 10);    
+    deref(p) = 42;            
+    print(deref(p));
+
+    var q = p + 1;           
+    deref(q) = 99;
+    print( deref(q));
+
+    free(p);                  
+    return 0;
+nuf

@@ -1,0 +1,15 @@
+fun add(var a,var b)
+return a+b;
+nuf
+
+fun sub(var a,var b)
+return a-b;
+nuf
+
+fun mul(var a,var b)
+return a*b;
+nuf
+
+fun div(var a,var b)
+return a/b;
+nuf

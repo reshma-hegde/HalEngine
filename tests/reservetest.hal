@@ -1,0 +1,18 @@
+fun main()
+    var p = reserve(4 * 5);  
+
+    var i = 0;
+    while i < 5
+        deref(p + i) = i * 10;
+        i = i + 1;
+    elihw
+
+    i = 0;
+    while i < 5
+        print("value[",i,"] =", deref(p + i));
+        i = i + 1;
+    elihw
+
+    free(p);
+    return 0;
+nuf

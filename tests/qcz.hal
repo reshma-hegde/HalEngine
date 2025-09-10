@@ -1,0 +1,24 @@
+fun main()
+    qubit q1;
+    qubit q2;
+
+    H(q1);
+    H(q2);
+
+    print("Before CZ:");
+    var r1 = measure q1;
+    var r2 = measure q2;
+    print("q1:", r1, "q2:", r2);
+
+   
+    CZ(q1, q2);
+
+    H(q2);
+
+    var r1_after = measure q1;
+    var r2_after = measure q2;
+    print("After CZ + H on q2:");
+    print("q1:", r1_after, "q2:", r2_after);
+
+    return 0;
+nuf

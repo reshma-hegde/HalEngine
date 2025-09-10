@@ -1,0 +1,25 @@
+fun main()
+    var a = -5;
+    var b = 7;
+    var c = 0;
+
+    if a > 0 && b > 0
+        print("Both a and b are positive");
+    elif a < 0 && b > 0
+        print("a is negative, b is positive");
+    else
+        print("Other cases");
+    esle
+
+    if c == 0 || b < 0
+        print("Either c is zero or b is negative");
+    fi
+
+    if !(a == -5)
+        print("a is not -5");
+    else
+        print("a is exactly -5");
+    esle
+
+    return 0;
+nuf

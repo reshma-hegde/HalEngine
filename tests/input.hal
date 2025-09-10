@@ -1,0 +1,8 @@
+fun main()
+    
+    print("Enter something ");
+    var n= input();
+    print("You entered: ", n);
+    
+    return 0;
+nuf

@@ -1,0 +1,22 @@
+fun main()
+    var a = 7;
+    var b = -3;
+
+    if a > 0
+        print("a is positive");
+
+        if b > 0
+            print("b is also positive");
+        fi
+
+        if b < 0
+            print("b is negative inside nested if");
+        fi
+    fi
+
+    if !(a == b)
+        print("a and b are not equal");
+    fi
+
+    return 0;
+nuf

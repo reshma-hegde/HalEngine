@@ -1,0 +1,15 @@
+fun main()
+var a = 10;
+a += 5;
+a -= 3;
+a *= 2;
+a /= 4;
+print("Final a = ", a);
+
+var b = 7;
+b *= 3;
+b += 2;
+print("Final b =", b);
+
+return a + b;
+nuf

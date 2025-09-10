@@ -1,0 +1,18 @@
+fun main()
+    var x = 5;
+
+    fork
+        x = x + 1;
+    or
+        x = x * 2;
+    merge result;
+
+    var i = 0;
+    var c=len(result);
+    while i < c
+        print(result[i]);
+        i = i + 1;
+    elihw
+
+    return 0;
+nuf
