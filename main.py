@@ -15,10 +15,10 @@ LEXER_DEBUG: bool = False
 PARSER_DEBUG: bool = True
 COMPILER_DEBUG: bool =True
 RUN_CODE:bool=True
-#try, qubitrestore,quantumtime,cot
+#try, qubitrestore,quantumtime
 if __name__ == '__main__':
     try:
-        with open("tests/arraytest.hal", "r") as f:
+        with open("tests/cot.hal", "r") as f:
             code: str = f.read()
         
         if LEXER_DEBUG:

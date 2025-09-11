@@ -201,6 +201,11 @@ class Compiler:
         # tan
         tan_func = ir.Function(self.module, fnty, 'tan')
         self.env.define('tan', tan_func, double_type)
+        self.env.define('cot', ir.Function(self.module, fnty, 'cot'), double_type)
+        self.env.define('sec', ir.Function(self.module, fnty, 'sec'), double_type)
+        self.env.define('cosec', ir.Function(self.module, fnty, 'cosec'), double_type)
+
+
 
        
     def increment_counter(self)->int:
@@ -1678,6 +1683,57 @@ class Compiler:
             self.report_error("CallExpression function must be an identifier with a name.")
             return None
         name: str = node.function.value
+
+        if name in ('cot', 'sec', 'cosec'):
+            if len(params) != 1:
+                self.report_error(f"{name}() requires exactly one double argument.")
+                return None
+            
+            arg_res = self.resolve_value(params[0])
+            if arg_res is None:
+                self.report_error(f"Could not resolve argument for {name}().")
+                return None
+            angle_val, angle_type = arg_res
+            
+            # Ensure the argument is a double
+            if not isinstance(angle_type, ir.DoubleType):
+                if isinstance(angle_type, ir.FloatType):
+                    angle_val = self.builder.fpext(angle_val, ir.DoubleType())
+                elif isinstance(angle_type, ir.IntType):
+                    angle_val = self.builder.sitofp(angle_val, ir.DoubleType())
+                else:
+                    self.report_error(f"{name}() requires a numeric argument.")
+                    return None
+
+            res = self.env.lookup("sin")
+            if res is None:
+                return self.report_error("Function 'sin' not found in environment.")
+            sin_func, _ = res
+
+            res_cos = self.env.lookup("cos")
+            if res_cos is None:
+                return self.report_error("Function 'cos' not found in environment.")
+            cos_func, _ = res_cos
+
+
+
+            one = ir.Constant(ir.DoubleType(), 1.0)
+            
+            if name == 'cosec':
+                sin_val = self.builder.call(sin_func, [angle_val])
+                result = self.builder.fdiv(one, sin_val)
+            elif name == 'sec':
+                cos_val = self.builder.call(cos_func, [angle_val])
+                result = self.builder.fdiv(one, cos_val)
+            elif name == 'cot':
+                sin_val = self.builder.call(sin_func, [angle_val])
+                cos_val = self.builder.call(cos_func, [angle_val])
+                result = self.builder.fdiv(cos_val, sin_val)
+            
+            if result is None:
+                return None
+            return result, ir.DoubleType()
+
 
         if name == "T":
             if node.arguments is None:
