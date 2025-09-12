@@ -1,0 +1,21 @@
+fun sqrt(var x)
+    if x < 0
+        print("Error: negative input");
+        return -1;
+    fi
+
+    var guess = x / 2;
+    var i = 0;
+    while i < 20
+        guess = (guess + x / guess) / 2;
+        i = i + 1;
+    elihw
+    return guess;
+nuf
+
+fun main()
+    var n=100;
+    var result = sqrt(n);
+    print("sqrt(", n, ") =", result); 
+    return 0;
+nuf
