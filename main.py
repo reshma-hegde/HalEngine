@@ -1,3 +1,4 @@
+import sys
 from lexer import Lexer
 from AST import Program
 from Parser import Parser
@@ -18,9 +19,15 @@ RUN_CODE:bool=True
 #try, qubitrestore,quantumtime
 if __name__ == '__main__':
     try:
-        with open("tests/cot.hal", "r") as f:
+        if len(sys.argv) < 2:
+            print("Usage: python main.py <file.hal>")
+            exit(1)
+
+        hal_file = sys.argv[1]
+
+        with open(hal_file, "r") as f:
             code: str = f.read()
-        
+      
         if LEXER_DEBUG:
             print("LEXER DEBUGGING")
             debug_lex: Lexer = Lexer(source=code)
