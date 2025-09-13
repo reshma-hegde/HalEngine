@@ -209,13 +209,6 @@ class MeasureExpression(Expression):
 
 class ForkStatement(Statement):
     def __init__(self, branches: List['BlockStatement'], merge_variable: 'IdentifierLiteral') -> None:
-        """
-        Represents a fork-merge block.
-        
-        Args:
-            branches: A list of BlockStatement nodes, each representing a parallel execution path.
-            merge_variable: The IdentifierLiteral where the outcomes will be stored.
-        """
         self.branches = branches
         self.merge_variable = merge_variable
 
@@ -280,8 +273,10 @@ class FunctionParameter(Expression):
     def __init__(self,name:str,value_type: Optional[str]=None)->None:
         self.name=name
         self.value_type=value_type
+
     def type(self)->NodeType:
         return NodeType.FunctionParameter
+    
     def json(self)->dict:
         return {
             "type":self.type().value,
@@ -342,6 +337,7 @@ class ThisExpression(Expression):
 
     def json(self) -> dict:
         return {"type": self.type().value}
+    
 
 class SuperExpression(Expression):
     def type(self) -> NodeType:
@@ -350,6 +346,7 @@ class SuperExpression(Expression):
     def json(self) -> dict:
         return {"type": self.type().value}
     
+
 class ClassStatement(Statement):
     def __init__(self, name: 'IdentifierLiteral', parent: Optional['IdentifierLiteral'], variables: List['VarStatement'], methods: List['FunctionStatement']) -> None:
         self.name = name
@@ -437,15 +434,11 @@ class AssignStatement(Statement):
 
 
 class IfStatement(Statement):
-    def __init__(self,
-                 condition: Optional[Expression] = None,
-                 consequence: Optional[BlockStatement] = None,
-                 alternative: Optional[BlockStatement] = None,
-                 el_if: Optional['IfStatement'] = None) -> None:  # Added el_if
+    def __init__(self,condition: Optional[Expression] = None,consequence: Optional[BlockStatement] = None,alternative: Optional[BlockStatement] = None,el_if: Optional['IfStatement'] = None) -> None:  
         self.condition = condition
         self.consequence = consequence
         self.alternative = alternative
-        self.el_if = el_if  # Added el_if
+        self.el_if = el_if 
 
     def type(self) -> NodeType:
         return NodeType.IfStatement

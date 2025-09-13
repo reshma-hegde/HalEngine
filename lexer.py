@@ -40,7 +40,7 @@ class Lexer:
     def __is_letter(self,ch:str)-> bool:
         return 'a'<=ch and ch<='z' or 'A'<=ch and ch<='Z' or ch=='_'
     
-    # In lexer.py
+    
     def __read_number(self) -> Token:
         start_pos: int = self.position
         dot_count: int = 0
@@ -56,9 +56,9 @@ class Lexer:
             output += self.current_char
             self.__read_char()
 
-        # Add this check for the 'd' suffix
+       
         if self.current_char == 'd':
-            self.__read_char()  # Consume the 'd'
+            self.__read_char() 
             return Token(TokenType.DOUBLE, float(output), self.line_no, start_pos)
 
         if dot_count == 0:
@@ -109,7 +109,7 @@ class Lexer:
                     ch = self.current_char
                     self.__read_char()
                     tok = self.__new_token(TokenType.MINUS_MINUS, ch + self.current_char)
-                elif peek == '>':   # handle arrow
+                elif peek == '>':  
                     ch = self.current_char
                     self.__read_char()
                     tok = self.__new_token(TokenType.ARROW, ch + self.current_char)
@@ -225,7 +225,6 @@ class Lexer:
         while True:
             self.__read_char()
             if self.current_char is None:
-                # Unterminated string
                 break
 
             if escaped:
