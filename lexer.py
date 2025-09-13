@@ -100,17 +100,23 @@ class Lexer:
                     tok = Token(TokenType.PLUS, self.current_char, self.line_no, self.position)
             
             case '-':
-                if self.__peek_char()=="=":
-                    ch=self.current_char
+                peek = self.__peek_char()
+                if peek == '=':
+                    ch = self.current_char
                     self.__read_char()
-                    tok=self.__new_token(TokenType.MINUS_EQ, ch+self.current_char)
-                elif self.__peek_char()=="-":
-                    ch=self.current_char
+                    tok = self.__new_token(TokenType.MINUS_EQ, ch + self.current_char)
+                elif peek == '-':
+                    ch = self.current_char
                     self.__read_char()
-                    tok=self.__new_token(TokenType.MINUS_MINUS, ch+self.current_char)
+                    tok = self.__new_token(TokenType.MINUS_MINUS, ch + self.current_char)
+                elif peek == '>':   # handle arrow
+                    ch = self.current_char
+                    self.__read_char()
+                    tok = self.__new_token(TokenType.ARROW, ch + self.current_char)
                 else:
-                    tok = Token(TokenType.MINUS, self.current_char, self.line_no, self.position)
-            
+                    tok = self.__new_token(TokenType.MINUS, self.current_char)
+
+
             case '*':
                 if self.__peek_char()=="=":
                     ch=self.current_char

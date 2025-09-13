@@ -4,7 +4,7 @@ import random
 from llvmlite import ir
 import os
 from AST import DoubleLiteral, Node,NodeType,Program,Statement,Expression, VarStatement,IdentifierLiteral,ReturnStatement,AssignStatement,CallExpression,InputExpression,NullLiteral, ClassStatement,ThisExpression,BranchStatement,ForkStatement,QubitDeclarationStatement,MeasureExpression
-from AST import ExpressionStatement,InfixExpression,IntegerLiteral,FloatLiteral, BlockStatement,FunctionStatement,IfStatement,BooleanLiteral,ArrayLiteral,RefExpression,DerefExpression,ReserveCall,RewindStatement, FastForwardStatement
+from AST import ExpressionStatement,InfixExpression,IntegerLiteral,FloatLiteral, BlockStatement,FunctionStatement,IfStatement,BooleanLiteral,ArrayLiteral,RefExpression,DerefExpression,ReserveCall,RewindStatement, FastForwardStatement,SuperExpression
 from AST import FunctionParameter,StringLiteral,WhileStatement,BreakStatement,ContinueStatement,PrefixExpression,PostfixExpression,LoadStatement,ArrayAccessExpression, StructInstanceExpression,StructAccessExpression,StructStatement,QubitResetStatement
 from typing import List, cast
 from Environment import Environment
@@ -24,6 +24,7 @@ class Compiler:
         self.struct_types: dict[str, ir.IdentifiedStructType] = {}
         self.struct_layouts: dict[str, dict[str, int]] = {}
         self.class_methods: dict[str, list[str]] = {}
+        self.class_parents: dict[str, str] = {}
         self.type_map:dict[str,ir.Type]={
             'int':ir.IntType(32),
             'float':ir.FloatType(),
@@ -1645,7 +1646,8 @@ class Compiler:
         if isinstance(node.function, StructAccessExpression):
             access_node = cast(StructAccessExpression, node.function)
             method_name = access_node.member_name.value
-           
+            is_super_call = access_node.struct_name.type() == NodeType.SuperExpression
+            
             instance_resolved = self.resolve_value(access_node.struct_name)
             if instance_resolved is None:
                 return self.report_error("Could not resolve instance for method call.")
@@ -1655,29 +1657,61 @@ class Compiler:
                 return self.report_error("Method call on a non-class instance.")
             
             class_type = cast(ir.IdentifiedStructType, instance_type.pointee) # type: ignore
-            class_name = class_type.name
             
-            num_args = len(node.arguments) if node.arguments is not None else 0
-            mangled_name = f"{class_name}_{method_name}_{num_args}"
+            search_class_name = class_type.name
+            search_ptr = instance_ptr
+            zero = ir.Constant(ir.IntType(32), 0)
 
-            func_result = self.env.lookup(mangled_name)
-            if func_result is None:
-                return self.report_error(f"Class '{class_name}' has no method '{method_name}'.")
-            
-            func, ret_type = func_result
-            func = cast(ir.Function, func)
+            if is_super_call:
+                # For 'super.method()', start searching from the parent class
+                current_class_name = self.builder.function.name.split('_')[0]
+                parent_name = self.class_parents.get(current_class_name)
+                if not parent_name:
+                    return self.report_error(f"'super' call in class '{current_class_name}' which has no parent.")
+                search_class_name = parent_name
+                # The pointer for the call must be to the parent sub-object
+                search_ptr = self.builder.gep(instance_ptr, [zero, zero], inbounds=True, name="super_ptr")
 
             
+            found_method = False
+            func_to_call = None
+            ret_type = None
+            num_args = len(params)
+
+            while search_class_name:
+                mangled_name = f"{search_class_name}_{method_name}_{num_args}"
+                func_result = self.env.lookup(mangled_name)
+                
+                if func_result:
+                    func_to_call, ret_type = func_result
+                    found_method = True
+                    break
+                parent_name = self.class_parents.get(search_class_name)
+                if parent_name:
+                    search_ptr = self.builder.gep(search_ptr, [zero, zero], inbounds=True, name="parent_ptr_cast")
+                search_class_name = parent_name
+            
+            if not found_method or func_to_call is None:
+                return self.report_error(f"Class '{class_type.name}' has no method '{method_name}'.")
+
+            func_to_call = cast(ir.Function, func_to_call)
+
+           
             args_ir: list[ir.Value] = []
-            for arg_expr in params:
-                arg_resolved = self.resolve_value(arg_expr)
-                if arg_resolved is None: return self.report_error("Could not resolve method argument.")
-                args_ir.append(arg_resolved[0])
+            for arg in params:
+                resolved = self.resolve_value(arg)
+                if resolved is not None:
+                    args_ir.append(resolved[0])
+
+            # The first argument is always the instance pointer ('this')
+            final_args = [search_ptr] + args_ir
             
-            final_args = [instance_ptr] + args_ir
-            
-            ret = self.builder.call(func, final_args)
+            ret = self.builder.call(func_to_call, final_args)
+            if ret_type is None:
+                return self.report_error("Function return type could not be resolved.")
+
             return ret, ret_type
+
         
         if not isinstance(node.function, IdentifierLiteral) or node.function.value is None:
             self.report_error("CallExpression function must be an identifier with a name.")
@@ -2127,6 +2161,12 @@ class Compiler:
                 return self.visit_member_access(cast(StructAccessExpression, node))
             case NodeType.MeasureExpression: 
                 return self.visit_measure_expression(cast(MeasureExpression, node))
+            case NodeType.SuperExpression:
+                result = self.env.lookup("this")
+                if result is None:
+                    self.report_error("'super' can only be used inside a class method.")
+                    return None
+                return result[0], result[1]
             case NodeType.IntegerLiteral:
                 int_node = cast(IntegerLiteral, node)
                 value = int_node.value
@@ -2510,42 +2550,60 @@ class Compiler:
 
         class_type = self.module.context.get_identified_type(class_name)
         self.struct_types[class_name] = class_type
-        self.struct_layouts[class_name] = {}
         
-        member_types = []
+        member_types: list[ir.Type] = []
+        member_layout: dict[str, int] = {}
+        
+        # Handle inheritance
+        parent_name = None
+        if node.parent:
+            parent_name = node.parent.value
+            if parent_name is None or parent_name not in self.struct_types:
+                return self.report_error(f"Parent class '{parent_name}' not found for class '{class_name}'.")
+            
+            self.class_parents[class_name] = parent_name
+            parent_type = self.struct_types[parent_name]
+            member_types.append(parent_type) 
+
+            # Inherit method names for resolution later
+            self.class_methods[class_name] = self.class_methods.get(parent_name, []).copy()
+        else:
+            self.class_methods[class_name] = []
+
+        # Add the class's own members
+        # The offset is 1 if inheriting (index 0 is the parent), otherwise 0
+        member_offset = len(member_types) 
         for i, member_var_stmt in enumerate(node.variables):
             member_name = cast(IdentifierLiteral, member_var_stmt.name).value
             if member_name is None:
                 self.report_error(f"Invalid member in class '{class_name}'.")
                 continue
             
-            
-            member_type = self.type_map['int'] 
+            member_type_str = member_var_stmt.value_type if member_var_stmt.value_type else 'int'
+            member_type = self.type_map.get(member_type_str, self.type_map['int'])
             member_types.append(member_type)
-            self.struct_layouts[class_name][member_name] = i
+            member_layout[member_name] = i + member_offset
         
+        self.struct_layouts[class_name] = member_layout
         class_type.set_body(*member_types)
-
         
-        self.class_methods[class_name] = []
+        # Compile methods for this class
         for method_node in node.methods:
             if method_node.name is None or method_node.name.value is None:
                 self.report_error("Method in class has no name.")
                 continue
             
-            
             method_name = method_node.name.value
-            
+            if method_name not in self.class_methods[class_name]:
+                 self.class_methods[class_name].append(method_name)
+
             num_params = len(method_node.parameters) if method_node.parameters else 0
             mangled_name = f"{class_name}_{method_name}_{num_params}"
-
+            
+            original_name = method_node.name.value
             method_node.name.value = mangled_name 
-            
-            self.class_methods[class_name].append(method_name)
-
             self.compile_method_function(method_node, class_type)
-            
-            method_node.name.value = method_name 
+            method_node.name.value = original_name
 
 
     def compile_method_function(self, node: FunctionStatement, class_type: ir.IdentifiedStructType) -> None:
@@ -2659,20 +2717,33 @@ class Compiler:
         obj_ptr, obj_type = obj_resolved
 
         if not isinstance(obj_type, ir.PointerType) or not isinstance(obj_type.pointee, ir.IdentifiedStructType): # type: ignore
-            self.report_error("Member access '.' operator can only be used on struct instances.")
+            self.report_error("Member access '.' operator can only be used on class instances.")
             return None
 
         struct_type = cast(ir.IdentifiedStructType, obj_type.pointee) # type: ignore
-        struct_name = struct_type.name
-        layout = self.struct_layouts.get(struct_name)
-        member_index = layout.get(member_name) if layout else None
-
-        if member_index is None:
-            self.report_error(f"Struct '{struct_name}' has no member named '{member_name}'.")
-            return None
-
+        
+        # Traverse inheritance chain to find the member
+        current_class_name = struct_type.name
+        current_ptr = obj_ptr
         zero = ir.Constant(ir.IntType(32), 0)
-        member_ptr = self.builder.gep(obj_ptr, [zero, ir.Constant(ir.IntType(32), member_index)], inbounds=True, name=f"{member_name}_ptr")
+        
+        while current_class_name is not None:
+            layout = self.struct_layouts.get(current_class_name)
+            if layout and member_name in layout:
+                member_index = layout[member_name]
+                member_ptr = self.builder.gep(current_ptr, [zero, ir.Constant(ir.IntType(32), member_index)], inbounds=True, name=f"{member_name}_ptr")
 
-        loaded_value = self.builder.load(member_ptr, name=member_name)
-        return loaded_value, loaded_value.type 
+                loaded_value = self.builder.load(member_ptr, name=member_name)
+                return loaded_value, loaded_value.type
+
+            # If not found, move to the parent class
+            parent_name = self.class_parents.get(current_class_name)
+            if parent_name:
+                # Get a pointer to the parent sub-object, which is always at index 0
+                current_ptr = self.builder.gep(current_ptr, [zero, zero], inbounds=True, name=f"{current_class_name}_to_{parent_name}_ptr")
+            
+            current_class_name = parent_name
+            
+        self.report_error(f"Class '{struct_type.name}' and its parents have no member named '{member_name}'.")
+        return None
+    

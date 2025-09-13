@@ -98,6 +98,8 @@ class TokenType(Enum):
     PIPE="|"
     SNAPSHOT="SNAPSHOT"
     RESTORE="RESTORE"
+    SUPER="SUPER"
+    ARROW="ARROW"
     
 
     
@@ -171,6 +173,7 @@ KEYWORDS: dict[str,TokenType]={
     "reset": TokenType.RESET,
     "snapshot":TokenType.SNAPSHOT,
     "restore":TokenType.RESTORE,
+    "super":TokenType.SUPER,
 
     
     

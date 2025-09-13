@@ -48,6 +48,7 @@ class NodeType(Enum):
     MeasureExpression = "MeasureExpression"
     QubitResetStatement = "QubitResetStatement"
     DoubleLiteral = "DoubleLiteral"
+    SuperExpression = "SuperExpression"
 
     
 
@@ -342,24 +343,32 @@ class ThisExpression(Expression):
     def json(self) -> dict:
         return {"type": self.type().value}
 
+class SuperExpression(Expression):
+    def type(self) -> NodeType:
+        return NodeType.SuperExpression
 
+    def json(self) -> dict:
+        return {"type": self.type().value}
+    
 class ClassStatement(Statement):
-    def __init__(self, name: 'IdentifierLiteral', variables: List['VarStatement'], methods: List['FunctionStatement']) -> None:
+    def __init__(self, name: 'IdentifierLiteral', parent: Optional['IdentifierLiteral'], variables: List['VarStatement'], methods: List['FunctionStatement']) -> None:
         self.name = name
+        self.parent = parent
         self.variables = variables
         self.methods = methods
 
     def type(self) -> NodeType:
         return NodeType.ClassStatement
-
+    
     def json(self) -> dict:
         return {
             "type": self.type().value,
             "name": self.name.json(),
+            "parent": self.parent.json() if self.parent else None,
             "variables": [var.json() for var in self.variables],
             "methods": [method.json() for method in self.methods]
         }
-
+    
 
 class BlockStatement(Statement):
     def __init__(self,statements:list[Statement]| None = None)->None:

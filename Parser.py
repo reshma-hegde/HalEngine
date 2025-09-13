@@ -4,7 +4,7 @@ from typing import Callable, Optional, List
 from enum import Enum,auto
 
 from AST import Statement,Expression,Program,FunctionStatement,ReturnStatement,BlockStatement,AssignStatement,PostfixExpression,LoadStatement,ArrayLiteral,NullLiteral,StructInstanceExpression,ClassStatement,ThisExpression,ForkStatement,QubitResetStatement
-from AST import ExpressionStatement, InfixExpression,IntegerLiteral,FloatLiteral,IdentifierLiteral,VarStatement, PrefixExpression, InputExpression,ArrayAccessExpression,StructStatement,StructAccessExpression,MemberStatement,BranchStatement,DoubleLiteral
+from AST import ExpressionStatement, InfixExpression,IntegerLiteral,FloatLiteral,IdentifierLiteral,VarStatement, PrefixExpression, InputExpression,ArrayAccessExpression,StructStatement,StructAccessExpression,MemberStatement,BranchStatement,DoubleLiteral,SuperExpression
 from AST import BooleanLiteral,IfStatement,CallExpression,FunctionParameter,StringLiteral, WhileStatement,BreakStatement,ContinueStatement,ForStatement,ReserveCall,RefExpression,DerefExpression,RewindStatement, FastForwardStatement,MeasureExpression,QubitDeclarationStatement
 
 
@@ -86,6 +86,9 @@ class Parser:
             TokenType.MEASURE: self.parse_measure_expression,
             TokenType.NOT:self.parse_prefix_expression,
             TokenType.DOUBLE:self.parse_double_literal,
+            TokenType.SUPER: self.parse_super_expression,
+            TokenType.ARROW:self.parse_gt_ignore,
+            
 
         } 
         self.infix_parse_fns: dict[TokenType,Callable]={
@@ -196,7 +199,7 @@ class Parser:
             stmt: Optional[Statement] = self.parse_statement()
             if stmt is not None:
                 program.statements.append(stmt)
-            if self.current_token is not None and self.current_token.type not in {TokenType.FUN}:
+            else:
                 self.next_token()
         return program
     
@@ -520,6 +523,10 @@ class Parser:
     def parse_this_expression(self) -> ThisExpression:
         return ThisExpression()
 
+    def parse_gt_ignore(self):
+    # GT is only valid as part of '=>' in class; ignore it elsewhere
+        return None
+
 
     def parse_class_statement(self) -> ClassStatement | None:
         if not self.expect_peek(TokenType.IDENTIFIER):
@@ -530,31 +537,46 @@ class Parser:
             return None
 
         class_name = IdentifierLiteral(value=self.current_token.literal)
+        parent_class = None
+        if self.peek_token_is(TokenType.ARROW):
+            self.next_token()  # consume ARROW
+            if not self.expect_peek(TokenType.IDENTIFIER):
+                self.errors.append("Expected parent class name after '->'")
+                return None
+                    
+            if self.current_token is None:
+                self.errors.append("Current token is None for parent class name")
+                return None
+            
+            parent_class = IdentifierLiteral(value=self.current_token.literal)
+
         variables: List[VarStatement] = []
         methods: List[FunctionStatement] = []
 
-        self.next_token() 
+        self.next_token()
 
         while not self.current_token_is(TokenType.SSALC) and not self.current_token_is(TokenType.EOF):
             if self.current_token_is(TokenType.VAR):
                 var_stmt = self.parse_var_statement()
-                variables.append(var_stmt)
+                if var_stmt:
+                    variables.append(var_stmt)
             elif self.current_token_is(TokenType.FUN):
                 method_stmt = self.parse_function_statement()
                 if method_stmt:
                     methods.append(method_stmt)
             else:
-                
                 self.next_token()
-
 
         if not self.current_token_is(TokenType.SSALC):
             self.errors.append(f"Expected 'ssalc' to close class declaration, got {self.current_token.type}")
             return None
 
         self.next_token()
-        return ClassStatement(name=class_name, variables=variables, methods=methods)
-
+        return ClassStatement(name=class_name, parent=parent_class, variables=variables, methods=methods)
+    
+    def parse_super_expression(self) -> SuperExpression:
+        return SuperExpression()
+    
 
     def parse_ref_expression(self) -> Expression:
         if not self.expect_peek(TokenType.LPAREN):
@@ -620,12 +642,14 @@ class Parser:
     
         if not self.expect_peek(TokenType.TCURTS):
             if self.peek_token is None:
-                self.errors.append("dsdfdf")
+                self.errors.append("Unexpected end of file inside struct")
                 return None
             self.errors.append(f"Expected 'tcurts' to close struct declaration, got {self.peek_token.type}")
             return None
-            
-        
+
+        # consume 'tcurts'
+        self.next_token()
+
         
         return StructStatement(name=struct_name, members=members)
 
@@ -984,7 +1008,7 @@ class Parser:
         expr=self.parse_expression(PrecedenceType.P_LOWEST)
         if expr is None:
             return None
-
+        
         if isinstance(expr, (IntegerLiteral, FloatLiteral, BooleanLiteral, IdentifierLiteral)):
             return None
 

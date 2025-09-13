@@ -1,0 +1,44 @@
+class Counter
+    var value;
+
+    fun init()
+        this.value = 0;
+        return 1;
+    nuf
+
+    fun inc()
+        this.value = this.value + 100;
+        return 1;
+    nuf
+ssalc
+
+class TimerCounter -> Counter
+    var time;
+
+    fun init()
+        super.init();  
+        this.time = 0; 
+        return 1;
+    nuf
+
+    fun tick()
+        this.time = this.time + 20;
+        return 1;
+    nuf
+ssalc
+
+fun main()
+    var c = Counter();
+    c.inc();
+    c.inc();
+    print("Counter value:", c.value);
+
+    var t = TimerCounter();
+    t.inc();  
+    t.inc()      
+    t.tick();    
+    print("TimerCounter value:", t.value);
+    print("TimerCounter time:", t.time);
+
+    return 1;
+nuf
