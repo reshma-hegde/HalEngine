@@ -1,0 +1,55 @@
+class BankAccount
+    var balance;  
+    var account_number;
+
+    fun init(var initialBalance, var accNum)
+        this.balance = initialBalance;
+        this.account_number = accNum;
+        return 0;
+    nuf
+
+    fun deposit(var amount)
+        this.balance = this.balance + amount;
+        return 1;
+    nuf
+
+    fun withdraw(var amount)
+        if this.balance >= amount
+            this.balance = this.balance - amount;
+        else
+            print("Insufficient funds");
+        esle
+        return 1;
+    nuf
+
+    fun get_balance()
+        var x = this.balance;
+        return x;
+    nuf
+
+    fun add_interest(var rate)
+        this.balance = this.balance + (this.balance * rate / 100);
+        return 1;
+    nuf
+ssalc
+
+fun main()
+    
+    var account = BankAccount(1000, 12345);
+    print("Balance =", account.get_balance()); 
+    
+    account.deposit(500);      
+    print("Balance after a deposit of 500 =", account.get_balance());  
+    
+    account.withdraw(200);
+    print("Balance after a withdrawal of 200=", account.get_balance());  
+    
+    account.add_interest(5);
+    print("Balance after adding interest of 5'%'=", account.get_balance()); 
+    
+  
+    account.withdraw(1400);
+    print("Balance after  withdrawal of 1400=", account.get_balance()); 
+
+    return 1; 
+nuf
