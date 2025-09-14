@@ -6,7 +6,7 @@ fun main()
         
        H(q1);
        r1=measure q1;
-    or
+    or 
  
         H(q1);
         H(q1);
