@@ -3,7 +3,7 @@ from Token import Token, TokenType
 from typing import Callable, Optional, List
 from enum import Enum,auto
 
-from AST import Statement,Expression,Program,FunctionStatement,ReturnStatement,BlockStatement,AssignStatement,PostfixExpression,LoadStatement,ArrayLiteral,NullLiteral,StructInstanceExpression,ClassStatement,ThisExpression,ForkStatement,QubitResetStatement
+from AST import RaiseStatement, Statement,Expression,Program,FunctionStatement,ReturnStatement,BlockStatement,AssignStatement,PostfixExpression,LoadStatement,ArrayLiteral,NullLiteral,StructInstanceExpression,ClassStatement,ThisExpression,ForkStatement,QubitResetStatement,PauseStatement
 from AST import ExpressionStatement, InfixExpression,IntegerLiteral,FloatLiteral,IdentifierLiteral,VarStatement, PrefixExpression, InputExpression,ArrayAccessExpression,StructStatement,StructAccessExpression,MemberStatement,BranchStatement,DoubleLiteral,SuperExpression
 from AST import BooleanLiteral,IfStatement,CallExpression,FunctionParameter,StringLiteral, WhileStatement,BreakStatement,ContinueStatement,ForStatement,ReserveCall,RefExpression,DerefExpression,RewindStatement, FastForwardStatement,MeasureExpression,QubitDeclarationStatement
 
@@ -46,8 +46,8 @@ PRECEDENCES: dict[TokenType,PrecedenceType]={
     TokenType.PLUS_PLUS:PrecedenceType.P_INDEX,
     TokenType.MINUS_MINUS:PrecedenceType.P_INDEX,
     TokenType.DOT: PrecedenceType.P_CALL,
-    TokenType.AND:PrecedenceType.LOGICAL_AND, # Add this line
-    TokenType.OR:PrecedenceType.LOGICAL_OR, # Add this line
+    TokenType.AND:PrecedenceType.LOGICAL_AND, 
+    TokenType.OR:PrecedenceType.LOGICAL_OR,
     
     
 }
@@ -109,7 +109,7 @@ class Parser:
             TokenType.MINUS_MINUS:self.parse_postfix_expression,
             TokenType.LBRACKET:self.parse_array_index_expression,
             TokenType.DOT: self.parse_struct_access_expression,
-            TokenType.AND:self.parse_infix_expression, # Add this line
+            TokenType.AND:self.parse_infix_expression, 
             TokenType.OR:self.parse_infix_expression,
             
         }
@@ -226,14 +226,7 @@ class Parser:
         }:
             return None 
         
-        """if self.current_token.type == TokenType.IDENTIFIER and self.peek_token_is(TokenType.LBRACKET):
-        # Parse the array access first
-            array_access = self.parse_expression(PrecedenceType.P_LOWEST)
-            if isinstance(array_access, ArrayAccessExpression) and self.peek_token_is_assignment():
-                return self.parse_array_element_assignment_statement(array_access)
-            else:
-                # If it's not followed by '=', treat it as an expression
-                return self.parse_expression_statement()"""
+        
         
         match self.current_token.type:
             case TokenType.VAR:
@@ -244,8 +237,12 @@ class Parser:
                 return self.parse_array_declaration()
             case TokenType.RESET:
                 return self.parse_reset_statement()
+            case TokenType.PAUSE: 
+                return self.parse_pause_statement()
             case TokenType.RETURN:
                 return self.parse_return_statement()
+            case TokenType.RAISE:
+                return self.parse_raise_statement()
             case TokenType.FORK:
                 return self.parse_fork_statement()
             case TokenType.IF:
@@ -289,6 +286,34 @@ class Parser:
                 return ExpressionStatement(expr=expr)
 
 
+    def parse_raise_statement(self) -> RaiseStatement | None:
+        self.next_token() 
+
+        value_expr = self.parse_expression(PrecedenceType.P_LOWEST)
+        if value_expr is None:
+            self.errors.append("Expected an expression after 'raise'.")
+            return None
+
+        if self.peek_token_is(TokenType.SEMICOLON):
+            self.next_token()
+
+        return RaiseStatement(value=value_expr)
+    
+    def parse_pause_statement(self) -> PauseStatement:
+        stmt = PauseStatement()
+        self.next_token() 
+
+        if self.current_token_is(TokenType.SEMICOLON):
+            stmt.value = None
+            return stmt
+
+        stmt.value = self.parse_expression(PrecedenceType.P_LOWEST)
+
+        if self.peek_token_is(TokenType.SEMICOLON):
+            self.next_token()
+
+        return stmt
+    
     def parse_qubit_declaration_statement(self) -> QubitDeclarationStatement | None:
         
         self.next_token() 
@@ -524,7 +549,6 @@ class Parser:
         return ThisExpression()
 
     def parse_gt_ignore(self):
-    # GT is only valid as part of '=>' in class; ignore it elsewhere
         return None
 
 
@@ -539,7 +563,7 @@ class Parser:
         class_name = IdentifierLiteral(value=self.current_token.literal)
         parent_class = None
         if self.peek_token_is(TokenType.ARROW):
-            self.next_token()  # consume ARROW
+            self.next_token() 
             if not self.expect_peek(TokenType.IDENTIFIER):
                 self.errors.append("Expected parent class name after '->'")
                 return None
@@ -647,7 +671,6 @@ class Parser:
             self.errors.append(f"Expected 'tcurts' to close struct declaration, got {self.peek_token.type}")
             return None
 
-        # consume 'tcurts'
         self.next_token()
 
         
@@ -882,7 +905,7 @@ class Parser:
 
 
     def parse_if_statement(self) -> Optional[IfStatement]:
-        self.next_token()  # Consume 'if'
+        self.next_token() 
 
         condition = self.parse_expression(PrecedenceType.P_LOWEST)
         if condition is None:
@@ -899,7 +922,6 @@ class Parser:
         el_if = None
 
         if self.current_token is not None and self.current_token.type == TokenType.ELIF:
-            # Recursively parse the 'elif' as a new 'if' statement
             el_if = self.parse_if_statement()
 
         elif self.current_token is not None and self.current_token.type == TokenType.ELSE:

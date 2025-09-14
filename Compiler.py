@@ -3,7 +3,7 @@ import math
 import random
 from llvmlite import ir
 import os
-from AST import DoubleLiteral, Node,NodeType,Program,Statement,Expression, VarStatement,IdentifierLiteral,ReturnStatement,AssignStatement,CallExpression,InputExpression,NullLiteral, ClassStatement,ThisExpression,BranchStatement,ForkStatement,QubitDeclarationStatement,MeasureExpression
+from AST import DoubleLiteral, Node,NodeType,Program, RaiseStatement,Statement,Expression, VarStatement,IdentifierLiteral,ReturnStatement,AssignStatement,CallExpression,InputExpression,NullLiteral, ClassStatement,ThisExpression,BranchStatement,ForkStatement,QubitDeclarationStatement,MeasureExpression
 from AST import ExpressionStatement,InfixExpression,IntegerLiteral,FloatLiteral, BlockStatement,FunctionStatement,IfStatement,BooleanLiteral,ArrayLiteral,RefExpression,DerefExpression,ReserveCall,RewindStatement, FastForwardStatement,SuperExpression
 from AST import FunctionParameter,StringLiteral,WhileStatement,BreakStatement,ContinueStatement,PrefixExpression,PostfixExpression,LoadStatement,ArrayAccessExpression, StructInstanceExpression,StructAccessExpression,StructStatement,QubitResetStatement
 from typing import List, cast
@@ -37,6 +37,9 @@ class Compiler:
         }
         
         self.counter:int=0
+
+        self.exception_handler_stack: list[ir.Block] = []
+        self.global_error_ptr: Optional[ir.GlobalVariable] = None
         self.module:ir.Module=ir.Module('main')
         self.true_str = ir.GlobalVariable(self.module, ir.ArrayType(ir.IntType(8), 5), name="true_str")
         self.true_str.global_constant = True
@@ -98,7 +101,7 @@ class Compiler:
             return true_var,false_var
         
         def __init_null()->ir.GlobalVariable:
-            null_type = self.type_map['int'].as_pointer() # Using a null pointer for 'null'
+            null_type = self.type_map['int'].as_pointer() 
             null_var = ir.GlobalVariable(self.module, null_type, 'null')
             null_var.initializer = ir.Constant(null_type, None) # type: ignore
             null_var.global_constant = True
@@ -181,34 +184,28 @@ class Compiler:
         null_var = __init_null()
         self.env.define('null', null_var, null_var.type)
         self.__initialize_math_builtins()
+        error_val_type = ir.IntType(8).as_pointer()
+        self.global_error_ptr = ir.GlobalVariable(self.module, error_val_type, name="__global_error_val")
+        self.global_error_ptr.initializer = ir.Constant(error_val_type, None) # type: ignore
+        self.global_error_ptr.linkage = 'internal'
 
     def __initialize_math_builtins(self) -> None:
-        """
-        Initializes math functions (sin, cos, tan) with double precision.
-        """
         double_type = ir.DoubleType()
-
-        # Function signature: double name(double)
         fnty = ir.FunctionType(double_type, [double_type])
-
-        # sin
         sin_func = ir.Function(self.module, fnty, 'sin')
         self.env.define('sin', sin_func, double_type)
 
-        # cos
         cos_func = ir.Function(self.module, fnty, 'cos')
         self.env.define('cos', cos_func, double_type)
 
-        # tan
         tan_func = ir.Function(self.module, fnty, 'tan')
         self.env.define('tan', tan_func, double_type)
+
         self.env.define('cot', ir.Function(self.module, fnty, 'cot'), double_type)
         self.env.define('sec', ir.Function(self.module, fnty, 'sec'), double_type)
         self.env.define('cosec', ir.Function(self.module, fnty, 'cosec'), double_type)
 
 
-
-       
     def increment_counter(self)->int:
         self.counter+=1
         return self.counter
@@ -218,7 +215,8 @@ class Compiler:
         match node.type():
             case NodeType.Program:
                 self.visit_program(cast(Program, node))
-
+            case NodeType.BranchStatement:
+                self.visit_branch_statement(cast(BranchStatement, node))   
             case NodeType.ExpressionStatement:
                 self.visit_expression_statement(cast(ExpressionStatement,node))
             case NodeType.RewindStatement:
@@ -251,10 +249,10 @@ class Compiler:
                 self.visit_while_statement(cast(WhileStatement,node))
             case NodeType.ClassStatement:
                 self.visit_class_statement(cast(ClassStatement,node))
-            
+            case NodeType.RaiseStatement:
+                self.visit_raise_statement(cast(RaiseStatement, node))   
             case NodeType.StructStatement:
                 self.visit_struct_definition_statement(cast(StructStatement, node))
-            
             case NodeType.CallExpression:
                 self.visit_call_expression(cast(CallExpression,node))
             case NodeType.BreakStatement:
@@ -267,6 +265,70 @@ class Compiler:
                 self.visit_null_literal(cast(NullLiteral, node))
 
   
+
+    def visit_branch_statement(self, node: BranchStatement) -> None:
+       
+        current_func = self.builder.function
+
+        handle_block = current_func.append_basic_block("handle_block")
+        merge_block = current_func.append_basic_block("merge_block")
+        self.exception_handler_stack.append(handle_block)
+
+        self.compile(node.try_block)
+        
+        if self.builder.block is not None:
+            block = self.builder.block
+            if not block.is_terminated:
+                self.builder.branch(merge_block)
+
+        self.builder.position_at_start(handle_block)
+
+        self.exception_handler_stack.pop()
+
+        if self.global_error_ptr is not None:
+            error_val = self.builder.load(self.global_error_ptr, "error_val")
+            error_var_name = node.error_variable.value
+
+            if error_var_name:
+                err_var_ptr = self.builder.alloca(error_val.type, name=error_var_name)
+                self.builder.store(error_val, err_var_ptr)
+                self.env.define(error_var_name, err_var_ptr, error_val.type)
+
+            null_ptr = ir.Constant(self.global_error_ptr.type.pointee, None) # type: ignore
+            self.builder.store(null_ptr, self.global_error_ptr)
+
+        self.compile(node.handle_block)
+      
+        if self.builder.block is not None:
+            block = self.builder.block
+            if not block.is_terminated:
+                self.builder.branch(merge_block)
+
+        self.builder.position_at_start(merge_block)
+
+   
+    def visit_raise_statement(self, node: "RaiseStatement") -> None:
+        if not self.exception_handler_stack:
+            self.report_error("'raise' statement used outside of a 'branch...handle' block. Program will terminate.")
+            return
+
+        error_val_resolved = self.resolve_value(node.value)
+        if error_val_resolved is None:
+            self.report_error("Could not resolve value for 'raise' statement.")
+            return
+        error_val, error_type = error_val_resolved
+
+        if self.global_error_ptr is not None:
+            target_type = self.global_error_ptr.type.pointee # type: ignore
+            
+            if error_type != target_type:
+                self.report_error(f"Cannot raise value of type {error_type}. Only strings are supported.")
+                return
+
+            self.builder.store(error_val, self.global_error_ptr)
+        
+        handler_block = self.exception_handler_stack[-1]
+        self.builder.branch(handler_block)
 
     
     def visit_fork_statement(self, node: ForkStatement) -> None:
@@ -938,26 +1000,21 @@ class Compiler:
 
         test, _ = result
 
-        # This check handles a simple 'if...fi' with no 'else' or 'elif'
+        
         if node.alternative is None and node.el_if is None:
             with self.builder.if_then(test):
                 if node.consequence is not None:
                     self.compile(node.consequence)
         else:
-            # This handles both 'if...else' and 'if...elif'
+       
             with self.builder.if_else(test) as (then_block, else_block):
-                # First, compile the consequence for the 'if' part
                 with then_block:
                     if node.consequence is not None:
                         self.compile(node.consequence)
                 
-                # Next, position the builder in the 'else' block
                 with else_block:
-                    # If an 'el_if' exists, compile it. This will recursively
-                    # call visit_if_statement for the next link in the chain.
                     if node.el_if is not None:
                         self.compile(node.el_if)
-                    # Otherwise, if it's a simple 'else', compile the alternative block.
                     elif node.alternative is not None:
                         self.compile(node.alternative)
                         
@@ -1320,7 +1377,6 @@ class Compiler:
             entry_builder.position_at_end(entry_block)
 
         qubit_alloca = entry_builder.alloca(ir.IntType(32), name=name)
-        print("Allocated qubit:", name, "->", qubit_alloca)
         entry_builder.store(ir.Constant(ir.IntType(32), initial_state_val), qubit_alloca)
 
         self.qubits[name] = {
@@ -1663,13 +1719,11 @@ class Compiler:
             zero = ir.Constant(ir.IntType(32), 0)
 
             if is_super_call:
-                # For 'super.method()', start searching from the parent class
                 current_class_name = self.builder.function.name.split('_')[0]
                 parent_name = self.class_parents.get(current_class_name)
                 if not parent_name:
                     return self.report_error(f"'super' call in class '{current_class_name}' which has no parent.")
                 search_class_name = parent_name
-                # The pointer for the call must be to the parent sub-object
                 search_ptr = self.builder.gep(instance_ptr, [zero, zero], inbounds=True, name="super_ptr")
 
             
@@ -1703,7 +1757,6 @@ class Compiler:
                 if resolved is not None:
                     args_ir.append(resolved[0])
 
-            # The first argument is always the instance pointer ('this')
             final_args = [search_ptr] + args_ir
             
             ret = self.builder.call(func_to_call, final_args)
@@ -1729,7 +1782,6 @@ class Compiler:
                 return None
             angle_val, angle_type = arg_res
             
-            # Ensure the argument is a double
             if not isinstance(angle_type, ir.DoubleType):
                 if isinstance(angle_type, ir.FloatType):
                     angle_val = self.builder.fpext(angle_val, ir.DoubleType())
@@ -1775,42 +1827,49 @@ class Compiler:
                 return None
             self.handle_T_call(node.arguments)
             return None
+        
         if name == "Tdg":
             if node.arguments is None:
                 self.report_error("TDG function requires a qubit argument.")
                 return None
             self.handle_Tdg_call(node.arguments)
             return None
+        
         if name == "X":
             if node.arguments is None:
                 self.report_error("X function requires a qubit argument.")
                 return None
             self.handle_X_call(node.arguments)
             return None
+        
         if name == "SWAP":
             if node.arguments is None:
                 self.report_error("SWAP function requires a qubit argument.")
                 return None
             self.handle_SWAP_call(node.arguments)
             return None
+        
         if name == "CSWAP":
             if node.arguments is None:
                 self.report_error("CSWAP function requires a qubit argument.")
                 return None
             self.handle_CSWAP_call(node.arguments)
             return None
+        
         if name == "TOFFOLI":
             if node.arguments is None:
                 self.report_error("TOFFOLI function requires a qubit argument.")
                 return None
             self.handle_TOFFOLI_call(node.arguments)
             return None
+        
         if name == "CZ":
             if node.arguments is None:
                 self.report_error("CZ function requires a qubit argument.")
                 return None
             self.handle_CZ_call(node.arguments)
             return None
+        
         if name == "S":
             if node.arguments is None:
                 self.report_error("S function requires a qubit argument.")
@@ -2013,7 +2072,6 @@ class Compiler:
                 self.report_error(f"Failed to resolve argument #{i + 1} in call to '{name}'")
                 return None
             actual_val, actual_type = result
-            print(f">>> Arg #{i+1}: value={actual_val}, type={actual_type}")
             expected_type = expected_arg_types[i]
 
             
@@ -2090,7 +2148,6 @@ class Compiler:
             if not (isinstance(right_type, ir.IntType) and right_type.width == 1):
                 self.report_error("Logical NOT operator '!' requires a boolean operand.")
                 return None
-            # Invert a boolean (i1) by comparing it with false (0).
             value = self.builder.icmp_signed('==', right_value, ir.Constant(ir.IntType(1), 0), name='not_res')
             Type = ir.IntType(1)
         if isinstance(right_type,ir.FloatType):
@@ -2159,14 +2216,17 @@ class Compiler:
         match node.type():
             case NodeType.StructAccessExpression:
                 return self.visit_member_access(cast(StructAccessExpression, node))
+            
             case NodeType.MeasureExpression: 
                 return self.visit_measure_expression(cast(MeasureExpression, node))
+            
             case NodeType.SuperExpression:
                 result = self.env.lookup("this")
                 if result is None:
                     self.report_error("'super' can only be used inside a class method.")
                     return None
                 return result[0], result[1]
+            
             case NodeType.IntegerLiteral:
                 int_node = cast(IntegerLiteral, node)
                 value = int_node.value
@@ -2179,7 +2239,7 @@ class Compiler:
                 Type = self.type_map['float' ]
                 return ir.Constant(Type, value), Type
             
-            case NodeType.DoubleLiteral: # Add this case
+            case NodeType.DoubleLiteral: 
                 double_node = cast(DoubleLiteral, node)
                 value = double_node.value
                 Type = self.type_map['double']
@@ -2198,8 +2258,10 @@ class Compiler:
 
             case NodeType.DerefExpression:
                 return self.visit_deref_expression(cast(DerefExpression, node))
+            
             case NodeType.ReserveCall:
                 return self.visit_reserve_call(cast(ReserveCall, node))
+            
             case NodeType.ArrayLiteral:
                 return self.visit_array_literal(cast(ArrayLiteral, node))
 
@@ -2207,7 +2269,6 @@ class Compiler:
                 return self.visit_array_index_expression(cast(ArrayAccessExpression, node))
             
             case NodeType.NullLiteral:
-            
                 null_ptr_type = ir.IntType(8).as_pointer()
                 llvm_null = ir.Constant(null_ptr_type, None)
                 return llvm_null, null_ptr_type
@@ -2565,13 +2626,10 @@ class Compiler:
             parent_type = self.struct_types[parent_name]
             member_types.append(parent_type) 
 
-            # Inherit method names for resolution later
             self.class_methods[class_name] = self.class_methods.get(parent_name, []).copy()
         else:
             self.class_methods[class_name] = []
 
-        # Add the class's own members
-        # The offset is 1 if inheriting (index 0 is the parent), otherwise 0
         member_offset = len(member_types) 
         for i, member_var_stmt in enumerate(node.variables):
             member_name = cast(IdentifierLiteral, member_var_stmt.name).value
@@ -2587,7 +2645,6 @@ class Compiler:
         self.struct_layouts[class_name] = member_layout
         class_type.set_body(*member_types)
         
-        # Compile methods for this class
         for method_node in node.methods:
             if method_node.name is None or method_node.name.value is None:
                 self.report_error("Method in class has no name.")
@@ -2722,7 +2779,6 @@ class Compiler:
 
         struct_type = cast(ir.IdentifiedStructType, obj_type.pointee) # type: ignore
         
-        # Traverse inheritance chain to find the member
         current_class_name = struct_type.name
         current_ptr = obj_ptr
         zero = ir.Constant(ir.IntType(32), 0)
@@ -2736,10 +2792,8 @@ class Compiler:
                 loaded_value = self.builder.load(member_ptr, name=member_name)
                 return loaded_value, loaded_value.type
 
-            # If not found, move to the parent class
             parent_name = self.class_parents.get(current_class_name)
             if parent_name:
-                # Get a pointer to the parent sub-object, which is always at index 0
                 current_ptr = self.builder.gep(current_ptr, [zero, zero], inbounds=True, name=f"{current_class_name}_to_{parent_name}_ptr")
             
             current_class_name = parent_name

@@ -14,11 +14,13 @@ fun main()
 
     branch
         result = risky_divide(x, y);
+        pritn("this wont be printed");
     handle e
-        print("Error occurred: "+ e);
+        print("Error occurred: ", e);
         result = 0;
     end
 
-    print("Result: "+ result);
+    print("consumed");
+    print("Result: ", result);
     return 0;
 nuf

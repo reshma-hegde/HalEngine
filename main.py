@@ -16,7 +16,7 @@ LEXER_DEBUG: bool = False
 PARSER_DEBUG: bool = True
 COMPILER_DEBUG: bool =True
 RUN_CODE:bool=True
-#try, qubitrestore,quantumtime
+#qubitrestore,quantumtime,pause
 if __name__ == '__main__':
     try:
         if len(sys.argv) < 2:

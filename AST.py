@@ -49,6 +49,8 @@ class NodeType(Enum):
     QubitResetStatement = "QubitResetStatement"
     DoubleLiteral = "DoubleLiteral"
     SuperExpression = "SuperExpression"
+    PauseStatement = "PauseStatement"
+    RaiseStatement = "RaiseStatement"
 
     
 
@@ -85,6 +87,33 @@ class Program(Node):
         }
 
 
+class RaiseStatement(Statement):
+    def __init__(self, value: Expression) -> None:
+        self.value = value
+
+    def type(self) -> NodeType:
+        return NodeType.RaiseStatement
+
+    def json(self) -> dict:
+        return {
+            "type": self.type().value,
+            "value": self.value.json()
+        }
+    
+
+class PauseStatement(Statement):
+    def __init__(self, value: Optional[Expression] = None) -> None:
+        self.value = value
+
+    def type(self) -> NodeType:
+        return NodeType.PauseStatement
+
+    def json(self) -> dict:
+        return {
+            "type": self.type().value,
+            "value": self.value.json() if self.value is not None else None
+        }
+    
 class DoubleLiteral(Expression):
     def __init__(self, value: Optional[float] = None) -> None:
         self.value: Optional[float] = value
@@ -449,7 +478,7 @@ class IfStatement(Statement):
             "condition": self.condition.json() if self.condition is not None else None,
             "consequence": self.consequence.json() if self.consequence is not None else None,
             "alternative": self.alternative.json() if self.alternative is not None else None,
-            "el_if": self.el_if.json() if self.el_if is not None else None  # Added el_if
+            "el_if": self.el_if.json() if self.el_if is not None else None   
         }
 
 class WhileStatement(Statement):

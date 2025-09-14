@@ -100,12 +100,11 @@ class TokenType(Enum):
     RESTORE="RESTORE"
     SUPER="SUPER"
     ARROW="ARROW"
+    PAUSE="PAUSE"
+    RAISE="RAISE"
     
 
     
-
-
-    #Typing
     TYPE="TYPE"
     INT_TYPE = "INT_TYPE"
     FLOAT_TYPE = "FLOAT_TYPE"
@@ -174,7 +173,8 @@ KEYWORDS: dict[str,TokenType]={
     "snapshot":TokenType.SNAPSHOT,
     "restore":TokenType.RESTORE,
     "super":TokenType.SUPER,
-
+    "pause":TokenType.PAUSE,
+    "raise":TokenType.RAISE,
     
     
 }
