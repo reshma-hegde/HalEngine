@@ -11,7 +11,7 @@ fun main()
     snapshot s1;
 
    
-    X(q1);
+    X(q1); 
     X(q2);
      shots = 42;
     print("After restore: r1=",r1," r2=",r2,"shots=",  shots);
