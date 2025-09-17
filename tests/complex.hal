@@ -7,21 +7,21 @@ fun main()
     print("z3.imag = ", z3.imag);
 
     var z4 = z1 - z2;
-    print("subtraction:");
+    print("\nsubtraction:");
     print("z4.real = ", z4.real);  
     print("z4.imag = ", z4.imag); 
 
     var z5= z1 * z2;
-    print("multiplication");
+    print("\nmultiplication");
     print("z5.real = ", z5.real);  
     print("z5.imag = ", z5.imag);   
 
     var z6 = z1 / z2;
-    print("division");
+    print("\ndivision");
     print("z6.real = ", z6.real);  
     print("z6.imag = ", z6.imag);  
 
-    print("abs");
+    print("\nabs");
     var m = abs(z1);
     print("abs(z1) = ", m);    
     return 0;   
