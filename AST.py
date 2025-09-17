@@ -51,6 +51,7 @@ class NodeType(Enum):
     SuperExpression = "SuperExpression"
     PauseStatement = "PauseStatement"
     RaiseStatement = "RaiseStatement"
+    AsExpression = "AsExpression"
 
     
 
@@ -99,7 +100,22 @@ class RaiseStatement(Statement):
             "type": self.type().value,
             "value": self.value.json()
         }
-    
+
+
+class AsExpression(Expression):
+    def __init__(self, variable: Expression, specifier: 'IdentifierLiteral') -> None:
+        self.variable = variable
+        self.specifier = specifier
+
+    def type(self) -> NodeType:
+        return NodeType.AsExpression
+
+    def json(self) -> dict:
+        return {
+            "type": self.type().value,
+            "variable": self.variable.json(),
+            "specifier": self.specifier.json()
+        } 
 
 class PauseStatement(Statement):
     def __init__(self, value: Optional[Expression] = None) -> None:

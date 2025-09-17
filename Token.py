@@ -102,6 +102,7 @@ class TokenType(Enum):
     ARROW="ARROW"
     PAUSE="PAUSE"
     RAISE="RAISE"
+    AS="AS"
     
 
     
@@ -175,6 +176,7 @@ KEYWORDS: dict[str,TokenType]={
     "super":TokenType.SUPER,
     "pause":TokenType.PAUSE,
     "raise":TokenType.RAISE,
+    "as":TokenType.AS,
     
     
 }

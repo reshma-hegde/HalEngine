@@ -1,0 +1,26 @@
+fun main()
+    var x = hypocrisy(5, 10);
+    var y = hypocrisy(2, 3);
+
+    var z = x + y;
+    print("Addition");
+    print("Seen: ", z as seen);
+    print("Truth: ", z as truth);
+
+    var a = x - y;
+    print("\nSubtraction");
+    print("Seen: ", a as seen);
+    print("Truth: ", a as truth);
+
+    var b = x * y;
+    print("\nMultiplication");
+    print("Seen: ", b as seen);
+    print("Truth: ", b as truth);
+
+    var w = x / y;
+    print("\nDivision");
+    print("Seen mul: ", w as seen);
+    print("Truth mul: ", w as truth);
+
+    return 0;
+nuf

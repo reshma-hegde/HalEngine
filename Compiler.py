@@ -4,7 +4,7 @@ import random
 from llvmlite import ir
 import os
 from AST import DoubleLiteral, Node,NodeType,Program, RaiseStatement,Statement,Expression, VarStatement,IdentifierLiteral,ReturnStatement,AssignStatement,CallExpression,InputExpression,NullLiteral, ClassStatement,ThisExpression,BranchStatement,ForkStatement,QubitDeclarationStatement,MeasureExpression
-from AST import ExpressionStatement,InfixExpression,IntegerLiteral,FloatLiteral, BlockStatement,FunctionStatement,IfStatement,BooleanLiteral,ArrayLiteral,RefExpression,DerefExpression,ReserveCall,RewindStatement, FastForwardStatement,SuperExpression
+from AST import ExpressionStatement,InfixExpression,IntegerLiteral,FloatLiteral, BlockStatement,FunctionStatement,IfStatement,BooleanLiteral,ArrayLiteral,RefExpression,DerefExpression,ReserveCall,RewindStatement, FastForwardStatement,SuperExpression,AsExpression
 from AST import FunctionParameter,StringLiteral,WhileStatement,BreakStatement,ContinueStatement,PrefixExpression,PostfixExpression,LoadStatement,ArrayAccessExpression, StructInstanceExpression,StructAccessExpression,StructStatement,QubitResetStatement
 from typing import List, cast
 from Environment import Environment
@@ -1178,6 +1178,63 @@ class Compiler:
         left_value, left_type = left_result
         right_value, right_type = right_result
 
+        is_left_hypocrisy = (isinstance(left_type, ir.PointerType) and
+                             isinstance(left_type.pointee, ir.IdentifiedStructType) and # type: ignore
+                             left_type.pointee.name.startswith("hypocrisy_")) # type: ignore
+
+        is_right_hypocrisy = (isinstance(right_type, ir.PointerType) and
+                              isinstance(right_type.pointee, ir.IdentifiedStructType) and # type: ignore
+                              right_type.pointee.name.startswith("hypocrisy_")) # type: ignore
+
+        if is_left_hypocrisy and is_right_hypocrisy:
+            if left_type != right_type:
+                self.report_error(f"Cannot perform '{operator}' on hypocrisy variables of different underlying types.")
+                return None
+
+            # Extract 'seen' and 'truth' values from both operands
+            left_seen_ptr = self.builder.gep(left_value, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True)
+            left_truth_ptr = self.builder.gep(left_value, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 1)], inbounds=True)
+            left_seen = self.builder.load(left_seen_ptr, "left_seen")
+            left_truth = self.builder.load(left_truth_ptr, "left_truth")
+
+            right_seen_ptr = self.builder.gep(right_value, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True)
+            right_truth_ptr = self.builder.gep(right_value, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 1)], inbounds=True)
+            right_seen = self.builder.load(right_seen_ptr, "right_seen")
+            right_truth = self.builder.load(right_truth_ptr, "right_truth")
+            
+            # Determine if the component type is floating-point
+            is_float_op = isinstance(left_seen.type, (ir.FloatType, ir.DoubleType))
+            
+            result_seen, result_truth = None, None
+
+            # Perform the operation component-wise
+            op_map = {
+                '+': (self.builder.fadd, self.builder.add),
+                '-': (self.builder.fsub, self.builder.sub),
+                '*': (self.builder.fmul, self.builder.mul),
+                '/': (self.builder.fdiv, self.builder.sdiv)
+            }
+
+            if operator not in op_map:
+                self.report_error(f"Operator '{operator}' is not supported for hypocrisy variables.")
+                return None
+            
+            f_op, i_op = op_map[operator]
+            op_func = f_op if is_float_op else i_op
+            
+            result_seen = op_func(left_seen, right_seen, "seen_res")
+            result_truth = op_func(left_truth, right_truth, "truth_res")
+
+            # Create a new hypocrisy variable to store the result
+            result_struct_type = left_type.pointee # type: ignore
+            result_ptr = self.builder.alloca(result_struct_type, name="hypocrisy_res")
+
+            # Store the computed values into the new variable
+            self.builder.store(result_seen, self.builder.gep(result_ptr, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)]))
+            self.builder.store(result_truth, self.builder.gep(result_ptr, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 1)]))
+
+            return result_ptr, left_type
+
         vector_struct_type = self.struct_types.get("vector")
         is_left_vec = isinstance(left_type, ir.PointerType) and left_type.pointee == vector_struct_type # type: ignore
         is_right_vec = isinstance(right_type, ir.PointerType) and right_type.pointee == vector_struct_type # type: ignore
@@ -2104,6 +2161,45 @@ class Compiler:
         one = ir.Constant(ir.IntType(32), 1)
         double_type = ir.DoubleType()
 
+        if name == "hypocrisy":
+            if len(params) != 2:
+                self.report_error("hypocrisy() requires exactly two arguments: seen and truth.")
+                return None
+
+            seen_res = self.resolve_value(params[0])
+            truth_res = self.resolve_value(params[1])
+
+            if seen_res is None or truth_res is None:
+                self.report_error("Could not resolve arguments for hypocrisy().")
+                return None
+
+            seen_val, seen_type = seen_res
+            truth_val, truth_type = truth_res
+
+            if seen_type != truth_type:
+                self.report_error(f"hypocrisy() values must be of the same type. Got {seen_type} and {truth_type}.")
+                return None
+
+            type_name_str = str(seen_type).replace("%", "").replace(" ", "_").replace("*", "ptr")
+            struct_type_name = f"hypocrisy_{type_name_str}"
+            
+            hypocrisy_struct_type = self.struct_types.get(struct_type_name)
+            if hypocrisy_struct_type is None:
+                hypocrisy_struct_type = self.module.context.get_identified_type(struct_type_name)
+                hypocrisy_struct_type.set_body(seen_type, truth_type)
+                self.struct_types[struct_type_name] = hypocrisy_struct_type
+
+            instance_ptr = self.builder.alloca(hypocrisy_struct_type, name="hypocrisy_instance")
+
+            seen_field_ptr = self.builder.gep(instance_ptr, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True, name="seen_ptr")
+            self.builder.store(seen_val, seen_field_ptr)
+
+            truth_field_ptr = self.builder.gep(instance_ptr, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 1)], inbounds=True, name="truth_ptr")
+            self.builder.store(truth_val, truth_field_ptr)
+
+            return instance_ptr, ir.PointerType(hypocrisy_struct_type)
+
+        
 
         if name == "vector":
             if len(params) != 2:
@@ -2206,34 +2302,25 @@ class Compiler:
             v1_ptr, v1_type = v1_res
             v2_ptr, v2_type = v2_res
 
-            # Ensure both arguments are vectors
+        
             if not (isinstance(v1_type, ir.PointerType) and v1_type.pointee == vector_struct_type and # type: ignore
                     isinstance(v2_type, ir.PointerType) and v2_type.pointee == vector_struct_type): # type: ignore
                 return self.report_error("cross() arguments must be vectors.")
 
-            # --- Runtime check for vector size ---
-            # In a real-world scenario, you'd want robust error handling.
-            # Here, we'll assume the size is 3, as cross product is only defined for 3D vectors.
-            # Adding a proper runtime check would require more complex IR generation (if/else blocks).
-
-            # Get data pointers
+            
             v1_data = self.builder.load(self.builder.gep(v1_ptr, [zero, zero], inbounds=True))
             v2_data = self.builder.load(self.builder.gep(v2_ptr, [zero, zero], inbounds=True))
 
-            # Load components of v1 (x1, y1, z1)
+            
             x1 = self.builder.load(self.builder.gep(v1_data, [ir.Constant(ir.IntType(32), 0)], inbounds=True))
             y1 = self.builder.load(self.builder.gep(v1_data, [ir.Constant(ir.IntType(32), 1)], inbounds=True))
             z1 = self.builder.load(self.builder.gep(v1_data, [ir.Constant(ir.IntType(32), 2)], inbounds=True))
 
-            # Load components of v2 (x2, y2, z2)
             x2 = self.builder.load(self.builder.gep(v2_data, [ir.Constant(ir.IntType(32), 0)], inbounds=True))
             y2 = self.builder.load(self.builder.gep(v2_data, [ir.Constant(ir.IntType(32), 1)], inbounds=True))
             z2 = self.builder.load(self.builder.gep(v2_data, [ir.Constant(ir.IntType(32), 2)], inbounds=True))
 
-            # --- Calculate cross product components ---
-            # cx = y1*z2 - z1*y2
-            # cy = z1*x2 - x1*z2
-            # cz = x1*y2 - y1*x2
+           
             cx = self.builder.fsub(self.builder.fmul(y1, z2), self.builder.fmul(z1, y2), "cx")
             cy = self.builder.fsub(self.builder.fmul(z1, x2), self.builder.fmul(x1, z2), "cy")
             cz = self.builder.fsub(self.builder.fmul(x1, y2), self.builder.fmul(y1, x2), "cz")
@@ -2244,18 +2331,16 @@ class Compiler:
 
             malloc_func, malloc_type = lookup_result
 
-            alloc_size = ir.Constant(ir.IntType(32), 3 * 8) # 3 * sizeof(double)
+            alloc_size = ir.Constant(ir.IntType(32), 3 * 8) 
             new_data_ptr = self.builder.call(malloc_func, [alloc_size])
             new_data_ptr = self.builder.bitcast(new_data_ptr, ir.PointerType(double_type))
 
-            # Alloca space for the result vector struct
+            
             result_vec_ptr = self.builder.alloca(vector_struct_type, name="cross_result_vec")
-
-            # Store the new data pointer and size into the struct
+            
             self.builder.store(new_data_ptr, self.builder.gep(result_vec_ptr, [zero, zero], inbounds=True))
             self.builder.store(ir.Constant(ir.IntType(32), 3), self.builder.gep(result_vec_ptr, [zero, one], inbounds=True))
 
-            # Store the calculated components into the new data array
             self.builder.store(cx, self.builder.gep(new_data_ptr, [ir.Constant(ir.IntType(32), 0)], inbounds=True))
             self.builder.store(cy, self.builder.gep(new_data_ptr, [ir.Constant(ir.IntType(32), 1)], inbounds=True))
             self.builder.store(cz, self.builder.gep(new_data_ptr, [ir.Constant(ir.IntType(32), 2)], inbounds=True))
@@ -2263,8 +2348,7 @@ class Compiler:
             return result_vec_ptr, ir.PointerType(vector_struct_type)
         
         
-        # Override 'abs' for vectors (magnitude)
-        if name == "abs": # Magnitude for vectors
+        if name == "abs": 
             if len(params) != 1: return self.report_error("abs() requires one argument.")
             arg_res = self.resolve_value(params[0])
             if not arg_res: return None
@@ -2300,9 +2384,7 @@ class Compiler:
                 sqrt_func, _ = self.env.lookup('sqrt') # type: ignore
                 magnitude = self.builder.call(sqrt_func, [final_sum_sq])
                 return magnitude, double_type
-            # Fall through to handle abs for complex numbers or other types if needed
-            # ... keep your existing complex abs logic here ...
-
+            
 
         if name == "complex":
             if len(params) != 2:
@@ -2334,7 +2416,7 @@ class Compiler:
 
             return instance_ptr, ir.PointerType(complex_type)
 
-        # Handle abs(complex_num)
+        
         if name == "abs":
             if len(params) != 1:
                 return self.report_error("abs() requires exactly one argument.")
@@ -2515,11 +2597,10 @@ class Compiler:
 
 
 
-        print(f">>> CallExpression: calling function '{name}' with {len(params)} arguments")
+        #print(f">>> CallExpression: calling function '{name}' with {len(params)} arguments")
         
         if name == "print":
-            # This block replaces the format-string-building logic.
-            # It handles each argument individually, which is necessary for custom types.
+        
             if len(params) == 0:
                 return self.report_error("print() requires at least one argument.")
 
@@ -2534,26 +2615,24 @@ class Compiler:
                 
                 val, val_type = result
 
-                # Check if the argument is a vector and call our dedicated helper
+                
                 is_vec = isinstance(val_type, ir.PointerType) and val_type.pointee == vector_struct_type # type: ignore
                 if is_vec:
                     self.builder.call(self.print_vector_func, [val])
                     continue
 
-                # Handle different primitive types by calling printf for each one
                 format_str = ""
                 arg_to_pass = val
 
                 if isinstance(arg_expr, StringLiteral):
-                    # For literal strings in the print call, we print them directly
                     format_str = arg_expr.value or ""
                     fmt_global, _ = self.convert_string(format_str)
                     fmt_ptr = self.builder.gep(fmt_global, [zero, zero], inbounds=True)
                     self.builder.call(printf_func, [fmt_ptr])
-                    continue # Move to the next argument
+                    continue 
 
                 elif isinstance(val_type, ir.PointerType) and isinstance(val_type.pointee, ir.IntType) and val_type.pointee.width == 8: # type: ignore
-                    format_str = "%s" # For string variables
+                    format_str = "%s"
                 elif isinstance(val_type, ir.IntType) and val_type.width == 32:
                     format_str = "%d"
                 elif isinstance(val_type, ir.DoubleType):
@@ -2567,7 +2646,6 @@ class Compiler:
                     false_ptr = self.builder.gep(self.false_str, [zero, zero], inbounds=True)
                     arg_to_pass = self.builder.select(val, true_ptr, false_ptr)
 
-                # Call printf for the current non-vector, non-string-literal argument
                 if format_str:
                     fmt_global, _ = self.convert_string(format_str)
                     fmt_ptr = self.builder.gep(fmt_global, [zero, zero], inbounds=True)
@@ -2575,12 +2653,11 @@ class Compiler:
                 else:
                     self.report_error(f"Unsupported type for print(): {val_type}")
 
-            # After processing all arguments, print a single newline
             newline_fmt, _ = self.convert_string("\n")
             newline_ptr = self.builder.gep(newline_fmt, [zero, zero], inbounds=True)
             self.builder.call(printf_func, [newline_ptr])
             
-            return ir.Constant(ir.IntType(32), 0), ir.IntType(32) # Dummy return for print
+            return ir.Constant(ir.IntType(32), 0), ir.IntType(32) 
 
         elif name == "free":
             if len(params) != 1:
@@ -2733,26 +2810,46 @@ class Compiler:
         return ret, ret_type
 
 
-    # Replace the existing __define_print_vector_helper method in Compiler.py
+    def visit_as_expression(self, node: "AsExpression") -> Optional[tuple[ir.Value, ir.Type]]:
+        var_resolved = self.resolve_value(node.variable)
+        if var_resolved is None:
+            self.report_error("Could not resolve hypocrisy variable in 'as' expression.")
+            return None
+        
+        struct_ptr, ptr_type = var_resolved
 
+        if not (isinstance(ptr_type, ir.PointerType) and 
+                isinstance(ptr_type.pointee, ir.IdentifiedStructType) and  # type: ignore
+                ptr_type.pointee.name.startswith("hypocrisy_")): # type: ignore
+            self.report_error("The 'as' operator can only be used on hypocrisy variables.")
+            return None
+
+        specifier = node.specifier.value
+        index = 0 if specifier == "seen" else 1
+
+        field_ptr = self.builder.gep(
+            struct_ptr,
+            [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), index)],
+            inbounds=True,
+            name=f"{specifier}_ptr"
+        )
+        
+        loaded_value = self.builder.load(field_ptr, name=specifier or "tmp")
+        return loaded_value, loaded_value.type
+        
+    
     def __define_print_vector_helper(self):
-        """
-        Defines a reusable LLVM function 'print_vector' that takes a vector struct pointer
-        and prints its contents in the format [el1, el2, ...].
-        """
+       
         vector_ptr_type = ir.PointerType(self.struct_types["vector"])
         fnty = ir.FunctionType(ir.VoidType(), [vector_ptr_type])
         self.print_vector_func = ir.Function(self.module, fnty, 'print_vector')
 
-        # Store current builder and create a new one for this function
         prev_builder = self.builder
         block = self.print_vector_func.append_basic_block('entry')
         self.builder = ir.IRBuilder(block)
 
-        # Get vector pointer argument
         vec_ptr, = self.print_vector_func.args
 
-        # Get data and size from the vector struct
         size_ptr = self.builder.gep(vec_ptr, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 1)], inbounds=True)
         data_ptr_ptr = self.builder.gep(vec_ptr, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True)
         size = self.builder.load(size_ptr)
@@ -2760,29 +2857,23 @@ class Compiler:
 
         lookup_result = self.env.lookup("print")
         if lookup_result is None:
-            # This is an internal function, so we can be more direct
             raise RuntimeError("Builtin 'print' not found during compiler initialization.")
 
         printf_func = lookup_result[0]
 
 
-        # Define format strings
         open_bracket_fmt, _ = self.convert_string("[")
-        # FIX: Removed the newline character to allow inline printing
         close_bracket_fmt, _ = self.convert_string("]")
         element_fmt, _ = self.convert_string("%f")
         separator_fmt, _ = self.convert_string(", ")
         
-        # Get pointers to format strings
         open_bracket_ptr = self.builder.gep(open_bracket_fmt, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True)
         close_bracket_ptr = self.builder.gep(close_bracket_fmt, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True)
         element_ptr = self.builder.gep(element_fmt, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True)
         separator_ptr = self.builder.gep(separator_fmt, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True)
 
-        # Print opening bracket
         self.builder.call(printf_func, [open_bracket_ptr])
 
-        # Loop setup
         loop_cond = self.builder.append_basic_block('loop_cond_print')
         loop_body = self.builder.append_basic_block('loop_body_print')
         loop_exit = self.builder.append_basic_block('loop_exit_print')
@@ -2791,41 +2882,37 @@ class Compiler:
         self.builder.store(ir.Constant(ir.IntType(32), 0), counter_ptr)
         self.builder.branch(loop_cond)
 
-        # Loop condition
         self.builder.position_at_start(loop_cond)
         i = self.builder.load(counter_ptr)
         cond = self.builder.icmp_signed('<', i, size)
         self.builder.cbranch(cond, loop_body, loop_exit)
 
-        # Loop body
         self.builder.position_at_start(loop_body)
         
-        # Print separator if not the first element
         is_first = self.builder.icmp_signed('==', i, ir.Constant(ir.IntType(32), 0))
         with self.builder.if_then(is_first, likely=False):
-            pass # Do nothing
+            pass 
         with self.builder.if_else(is_first) as (then, otherwise):
             with then:
                 pass
             with otherwise:
                 self.builder.call(printf_func, [separator_ptr])
 
-        # Print element
+        
         elem_ptr = self.builder.gep(data_ptr, [i], inbounds=True)
         elem = self.builder.load(elem_ptr)
         self.builder.call(printf_func, [element_ptr, elem])
 
-        # Increment counter
         next_i = self.builder.add(i, ir.Constant(ir.IntType(32), 1))
         self.builder.store(next_i, counter_ptr)
         self.builder.branch(loop_cond)
 
-        # Loop exit
+       
         self.builder.position_at_start(loop_exit)
         self.builder.call(printf_func, [close_bracket_ptr])
         self.builder.ret_void()
 
-        # Restore original builder
+  
         self.builder = prev_builder
 
 
@@ -3022,6 +3109,8 @@ class Compiler:
     def resolve_value(self, node: Expression, value_type: Optional[str] = None) -> Optional[tuple[ir.Value, ir.Type]]:
 
         match node.type():
+            case NodeType.AsExpression: 
+                return self.visit_as_expression(cast(AsExpression, node))
             case NodeType.StructAccessExpression:
                 return self.visit_member_access(cast(StructAccessExpression, node))
             

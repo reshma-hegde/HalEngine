@@ -4,7 +4,7 @@ from typing import Callable, Optional, List
 from enum import Enum,auto
 
 from AST import RaiseStatement, Statement,Expression,Program,FunctionStatement,ReturnStatement,BlockStatement,AssignStatement,PostfixExpression,LoadStatement,ArrayLiteral,NullLiteral,StructInstanceExpression,ClassStatement,ThisExpression,ForkStatement,QubitResetStatement,PauseStatement
-from AST import ExpressionStatement, InfixExpression,IntegerLiteral,FloatLiteral,IdentifierLiteral,VarStatement, PrefixExpression, InputExpression,ArrayAccessExpression,StructStatement,StructAccessExpression,MemberStatement,BranchStatement,DoubleLiteral,SuperExpression
+from AST import ExpressionStatement, InfixExpression,IntegerLiteral,FloatLiteral,IdentifierLiteral,VarStatement, PrefixExpression, InputExpression,ArrayAccessExpression,StructStatement,StructAccessExpression,MemberStatement,BranchStatement,DoubleLiteral,SuperExpression,AsExpression
 from AST import BooleanLiteral,IfStatement,CallExpression,FunctionParameter,StringLiteral, WhileStatement,BreakStatement,ContinueStatement,ForStatement,ReserveCall,RefExpression,DerefExpression,RewindStatement, FastForwardStatement,MeasureExpression,QubitDeclarationStatement
 
 
@@ -21,6 +21,7 @@ class PrecedenceType(Enum):
     P_EXPONENT=auto()
     P_PREFIX=auto()
     P_CALL=auto()
+    P_AS=auto()
     P_INDEX=auto()
     TRUE = auto()
     FALSE = auto()
@@ -48,6 +49,7 @@ PRECEDENCES: dict[TokenType,PrecedenceType]={
     TokenType.DOT: PrecedenceType.P_CALL,
     TokenType.AND:PrecedenceType.LOGICAL_AND, 
     TokenType.OR:PrecedenceType.LOGICAL_OR,
+    TokenType.AS: PrecedenceType.P_AS,
     
     
 }
@@ -111,7 +113,7 @@ class Parser:
             TokenType.DOT: self.parse_struct_access_expression,
             TokenType.AND:self.parse_infix_expression, 
             TokenType.OR:self.parse_infix_expression,
-            
+            TokenType.AS: self.parse_as_expression,
         }
 
         self.next_token()
@@ -286,6 +288,24 @@ class Parser:
                 return ExpressionStatement(expr=expr)
 
 
+    def parse_as_expression(self, left: Expression) -> Expression | None:
+        self.next_token() 
+
+        if not self.current_token_is(TokenType.IDENTIFIER):
+            self.errors.append("Expected 'seen' or 'truth' after 'as'")
+            return None
+        if self.current_token is None:
+            self.errors.append("Invalid qubit identifier for reset.")
+            return None
+
+        specifier_literal = self.current_token.literal
+        if specifier_literal not in ["seen", "truth"]:
+            self.errors.append(f"Invalid specifier '{specifier_literal}' for 'as'. Must be 'seen' or 'truth'.")
+            return None
+
+        specifier = IdentifierLiteral(value=specifier_literal)
+        return AsExpression(variable=left, specifier=specifier)
+    
     def parse_raise_statement(self) -> RaiseStatement | None:
         self.next_token() 
 
