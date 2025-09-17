@@ -5,6 +5,6 @@ fun main()
     var sc = sec(angle);
     var ct = cot(angle);
 
-    print("angle:", angle, "cosec:", cs, " sec:", sc, " cot:", ct);
+    print("angle: ", angle, " cosec: ", cs, " sec: ", sc, " cot: ", ct);
     return 0;
 nuf

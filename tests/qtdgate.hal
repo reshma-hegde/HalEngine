@@ -5,17 +5,17 @@ fun main()
 
     var r0 = measure q1;
     print("Initial measurement:");
-    print("q1:", r0);
+    print("q1: ", r0);
 
     Tdg(q1); 
     var r1 = measure q1;
     print("After H + Tdg measurement:");
-    print("q1:", r1);
+    print("q1: ", r1);
 
     H(q1);  
     var r2 = measure q1;
     print("After H + Tdg + H measurement:");
-    print("q1:", r2);
+    print("q1: ", r2);
 
     return 0;
 nuf

@@ -18,7 +18,7 @@ fun main()
     push(nums, length, 99);
     length = length + 1;
 
-    print("After push:\n");
+    print("\nAfter push:");
     var j = 0;
     while j < length
         print( nums[j]);

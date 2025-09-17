@@ -9,7 +9,7 @@ fun main()
     var r1 = measure q1;
     var r2 = measure q2;
     print("Before SWAP:");
-    print("q1:", r1, "q2:", r2);
+    print("q1: ", r1, " q2: ", r2);
 
     
     SWAP(q1, q2);
@@ -17,7 +17,7 @@ fun main()
     r1 = measure q1;
     r2 = measure q2;
     print("After SWAP:");
-    print("q1:", r1, "q2:", r2);
+    print("q1: ", r1, " q2: ", r2);
 
     return 0;
 nuf

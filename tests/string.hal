@@ -6,7 +6,7 @@ fun main()
     print("Enter your age: ");
     var age = input();
     
-    print("Hello,", name);
-    print("You are", age, "years old.");
+    print("Hello, ", name);
+    print("You are ", age, " years old.");
     return 0;
 nuf

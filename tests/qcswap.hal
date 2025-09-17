@@ -12,7 +12,7 @@ fun main()
     var r_c = measure qc;
     var r_t1 = measure qt1;
     var r_t2 = measure qt2;
-    print("qc:", r_c, "qt1:", r_t1, "qt2:", r_t2);
+    print("qc: ", r_c, " qt1: ", r_t1, " qt2: ", r_t2);
 
    
     CSWAP(qc, qt1, qt2);
@@ -21,7 +21,7 @@ fun main()
     var r_t1_after = measure qt1;
     var r_t2_after = measure qt2;
     print("After CSWAP:");
-    print("qc:", r_c_after, "qt1:", r_t1_after, "qt2:", r_t2_after);
+    print("qc: ", r_c_after, " qt1: ", r_t1_after, " qt2: ", r_t2_after);
 
     return 0;
 nuf

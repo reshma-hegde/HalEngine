@@ -12,7 +12,7 @@ fun main()
         i = i + 1;
     elihw
 
-    print( deref(b), deref(b + 1), deref(b + 2));
+    print( deref(b)," ", deref(b + 1)," ", deref(b + 2));
 
     free(a);
     free(b);

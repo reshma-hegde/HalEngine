@@ -5,19 +5,19 @@ fun main()
 
     var r1 = measure q1;
     print("Initial measurement:");
-    print("q1:", r1);
+    print("q1: ", r1);
 
     H(q1); 
     Sdg(q1);
 
     var r2 = measure q1;
     print("After H + Sdg measurement:");
-    print("q1:", r2);
+    print("q1: ", r2);
 
     H(q1);  
     var r3 = measure q1;
     print("After H + Sdg + H measurement:");
-    print("q1:", r3);
+    print("q1: ", r3);
 
     return 0;
 nuf

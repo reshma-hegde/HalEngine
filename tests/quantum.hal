@@ -10,8 +10,8 @@ fun main()
     var r1 = measure q1;
     var r2 = measure q2;
     print("Initial measurement:");
-    print("q1:", r1);
-    print("q2:", r2);
+    print("q1: ", r1);
+    print("q2: ", r2);
 
     @ Move forward in time by 2 steps (simulation snapshot)
     fastforward 2;
@@ -23,8 +23,8 @@ fun main()
     r1 = measure q1;
     r2 = measure q2;
     print("After H + CNOT:");
-    print("q1:", r1);
-    print("q2:", r2);
+    print("q1: ", r1);
+    print("q2: ", r2);
 
     @ Rewind 1 step (go back to previous snapshot)
     rewind 1;
@@ -32,8 +32,8 @@ fun main()
     r1 = measure q1;
     r2 = measure q2;
     print("After rewind:");
-    print("q1:", r1);
-    print("q2:", r2);
+    print("q1: ", r1);
+    print("q2: ", r2);
 
     return 0;
 nuf

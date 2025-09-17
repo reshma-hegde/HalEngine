@@ -6,6 +6,6 @@ fun main()
     var c = cos(angle);
     var t = tan(angle);
 
-    print("sin:", s, " cos:", c, " tan:", t);
+    print("sin: ", s, " cos: ", c, " tan: ", t);
     return 0;
 nuf

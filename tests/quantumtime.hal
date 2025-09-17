@@ -18,7 +18,7 @@ fun main()
     var c = len(timelines);
     while i < c
         
-        print("Timeline", i, "q1:",timelines[i]);
+        print("Timeline ", i, " q1: ",timelines[i]);
         i++;
     elihw
 

@@ -7,18 +7,18 @@ fun main()
     CNOT (q1, q2);
     var r1 = measure q1;
     var r2 = measure q2;
-    print("After restore: r1=",r1," r2=",r2,"shots=",  shots);
+    print("After restore: r1= ",r1," r2= ",r2," shots= ",  shots);
     snapshot s1;
 
    
     X(q1); 
     X(q2);
      shots = 42;
-    print("After restore: r1=",r1," r2=",r2,"shots=",  shots);
+    print("After restore: r1= ",r1," r2= ",r2," shots= ",  shots);
     restore s1;
 
     var r1 = measure q1;
     var r2 = measure q2;
-    print("After restore: r1=",r1," r2=",r2,"shots=",  shots);
+    print("After restore: r1= ",r1," r2= ",r2," shots= ",  shots);
     return 0;
 nuf

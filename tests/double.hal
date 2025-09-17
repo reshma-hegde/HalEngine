@@ -1,6 +1,6 @@
 fun main()
     var f = 3.14;     
     var d = 3.14d;  
-    print(f, d);
+    print(f," ", d);
     return 0;
 nuf

@@ -1,10 +1,10 @@
 fun show_data(var x,var y,var z,var d,array e)
     
    
-    print("integer value:",x);
-    print("float value:",y);
-    print("double value:",z);
-    print("string value:",d);
+    print("integer value: ",x);
+    print("float value: ",y);
+    print("double value: ",z);
+    print("string value: ",d);
     var i=0;
     print("array values");
     while i<4

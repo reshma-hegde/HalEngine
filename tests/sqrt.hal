@@ -16,6 +16,6 @@ nuf
 fun main()
     var n=100;
     var result = sqrts(n);
-    print("sqrt(", n, ") =", result); 
+    print("sqrt(", n, ") = ", result); 
     return 0;
 nuf

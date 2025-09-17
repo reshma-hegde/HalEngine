@@ -3,6 +3,6 @@ fun main()
     var a=3.1423566;
     var b=7.123455;
     var c=a+b;
-    print("a=",a,"b=",b,"c=",c);
+    print("a= ",a," b= ",b," c= ",c);
     return b;
 nuf
