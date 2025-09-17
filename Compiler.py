@@ -19,6 +19,7 @@ BUILTIN_HEADERS = {
 
 class Compiler:
     def __init__(self)-> None:
+        self.module:ir.Module=ir.Module('main')
         self.errors: list[str] = []
         self.array_lengths: dict[str, int] = {}
         self.struct_types: dict[str, ir.IdentifiedStructType] = {}
@@ -36,12 +37,17 @@ class Compiler:
             'qubit':ir.IntType(32)
         }
         
+        complex_type = self.module.context.get_identified_type("complex")
+        complex_type.set_body(ir.DoubleType(), ir.DoubleType()) 
+        self.struct_types["complex"] = complex_type
+        self.struct_layouts["complex"] = {"real": 0, "imag": 1}
+
         self.counter:int=0
         self.generic_functions: dict[str, FunctionStatement] = {}
 
         self.exception_handler_stack: list[ir.Block] = []
         self.global_error_ptr: Optional[ir.GlobalVariable] = None
-        self.module:ir.Module=ir.Module('main')
+        
         self.true_str = ir.GlobalVariable(self.module, ir.ArrayType(ir.IntType(8), 5), name="true_str")
         self.true_str.global_constant = True
         self.true_str.linkage = 'internal'
@@ -206,6 +212,9 @@ class Compiler:
         self.env.define('sec', ir.Function(self.module, fnty, 'sec'), double_type)
         self.env.define('cosec', ir.Function(self.module, fnty, 'cosec'), double_type)
 
+        sqrt_func = ir.Function(self.module, ir.FunctionType(double_type, [double_type]), 'sqrt')
+        self.env.define('sqrt', sqrt_func, double_type)
+        
 
     def increment_counter(self)->int:
         self.counter+=1
@@ -1154,6 +1163,165 @@ class Compiler:
         left_value, left_type = left_result
         right_value, right_type = right_result
 
+        is_left_complex = isinstance(left_type, ir.PointerType) and isinstance(left_type.pointee, ir.IdentifiedStructType) and left_type.pointee.name == "complex" # type: ignore
+        is_right_complex = isinstance(right_type, ir.PointerType) and isinstance(right_type.pointee, ir.IdentifiedStructType) and right_type.pointee.name == "complex" # type: ignore
+
+        if is_left_complex and is_right_complex and operator == '+':
+        
+            left_real_ptr = self.builder.gep(left_value, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True)
+            left_imag_ptr = self.builder.gep(left_value, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 1)], inbounds=True)
+            left_real = self.builder.load(left_real_ptr)
+            left_imag = self.builder.load(left_imag_ptr)
+
+            
+            right_real_ptr = self.builder.gep(right_value, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True)
+            right_imag_ptr = self.builder.gep(right_value, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 1)], inbounds=True)
+            right_real = self.builder.load(right_real_ptr)
+            right_imag = self.builder.load(right_imag_ptr)
+
+            
+            res_real = self.builder.fadd(left_real, right_real, "res_real")
+            res_imag = self.builder.fadd(left_imag, right_imag, "res_imag")
+
+            complex_type = self.struct_types["complex"]
+            
+            res_ptr = self.builder.alloca(complex_type, name="complex_add_res")
+            
+            res_real_ptr = self.builder.gep(res_ptr, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True)
+            res_imag_ptr = self.builder.gep(res_ptr, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 1)], inbounds=True)
+            self.builder.store(res_real, res_real_ptr)
+            self.builder.store(res_imag, res_imag_ptr)
+
+            return res_ptr, ir.PointerType(complex_type)
+        
+        if is_left_complex and is_right_complex and operator == '-':
+            # Extract left parts
+            left_real_ptr = self.builder.gep(left_value, [ir.Constant(ir.IntType(32), 0),
+                                                        ir.Constant(ir.IntType(32), 0)], inbounds=True)
+            left_imag_ptr = self.builder.gep(left_value, [ir.Constant(ir.IntType(32), 0),
+                                                        ir.Constant(ir.IntType(32), 1)], inbounds=True)
+            left_real = self.builder.load(left_real_ptr)
+            left_imag = self.builder.load(left_imag_ptr)
+
+            # Extract right parts
+            right_real_ptr = self.builder.gep(right_value, [ir.Constant(ir.IntType(32), 0),
+                                                            ir.Constant(ir.IntType(32), 0)], inbounds=True)
+            right_imag_ptr = self.builder.gep(right_value, [ir.Constant(ir.IntType(32), 0),
+                                                            ir.Constant(ir.IntType(32), 1)], inbounds=True)
+            right_real = self.builder.load(right_real_ptr)
+            right_imag = self.builder.load(right_imag_ptr)
+
+            # Perform subtraction
+            res_real = self.builder.fsub(left_real, right_real, "res_real")
+            res_imag = self.builder.fsub(left_imag, right_imag, "res_imag")
+
+            # Allocate result struct
+            complex_type = self.struct_types["complex"]
+            res_ptr = self.builder.alloca(complex_type, name="complex_sub_res")
+
+            # Store into struct fields
+            res_real_ptr = self.builder.gep(res_ptr, [ir.Constant(ir.IntType(32), 0),
+                                                    ir.Constant(ir.IntType(32), 0)], inbounds=True)
+            res_imag_ptr = self.builder.gep(res_ptr, [ir.Constant(ir.IntType(32), 0),
+                                                    ir.Constant(ir.IntType(32), 1)], inbounds=True)
+            self.builder.store(res_real, res_real_ptr)
+            self.builder.store(res_imag, res_imag_ptr)
+
+            return res_ptr, ir.PointerType(complex_type)
+        
+        if is_left_complex and is_right_complex and operator == '*':
+            # Extract left parts
+            left_real_ptr = self.builder.gep(left_value, [ir.Constant(ir.IntType(32), 0),
+                                                        ir.Constant(ir.IntType(32), 0)], inbounds=True)
+            left_imag_ptr = self.builder.gep(left_value, [ir.Constant(ir.IntType(32), 0),
+                                                        ir.Constant(ir.IntType(32), 1)], inbounds=True)
+            left_real = self.builder.load(left_real_ptr)
+            left_imag = self.builder.load(left_imag_ptr)
+
+            # Extract right parts
+            right_real_ptr = self.builder.gep(right_value, [ir.Constant(ir.IntType(32), 0),
+                                                            ir.Constant(ir.IntType(32), 0)], inbounds=True)
+            right_imag_ptr = self.builder.gep(right_value, [ir.Constant(ir.IntType(32), 0),
+                                                            ir.Constant(ir.IntType(32), 1)], inbounds=True)
+            right_real = self.builder.load(right_real_ptr)
+            right_imag = self.builder.load(right_imag_ptr)
+
+            # Perform multiplication: (a*c - b*d), (a*d + b*c)
+            ac = self.builder.fmul(left_real, right_real, "ac")
+            bd = self.builder.fmul(left_imag, right_imag, "bd")
+            ad = self.builder.fmul(left_real, right_imag, "ad")
+            bc = self.builder.fmul(left_imag, right_real, "bc")
+
+            res_real = self.builder.fsub(ac, bd, "res_real")
+            res_imag = self.builder.fadd(ad, bc, "res_imag")
+
+            # Allocate result struct
+            complex_type = self.struct_types["complex"]
+            res_ptr = self.builder.alloca(complex_type, name="complex_mul_res")
+
+            # Store into struct fields
+            res_real_ptr = self.builder.gep(res_ptr, [ir.Constant(ir.IntType(32), 0),
+                                                    ir.Constant(ir.IntType(32), 0)], inbounds=True)
+            res_imag_ptr = self.builder.gep(res_ptr, [ir.Constant(ir.IntType(32), 0),
+                                                    ir.Constant(ir.IntType(32), 1)], inbounds=True)
+            self.builder.store(res_real, res_real_ptr)
+            self.builder.store(res_imag, res_imag_ptr)
+
+            return res_ptr, ir.PointerType(complex_type)
+        
+        if is_left_complex and is_right_complex and operator == '/':
+            # Extract left parts
+            left_real_ptr = self.builder.gep(left_value, [ir.Constant(ir.IntType(32), 0),
+                                                        ir.Constant(ir.IntType(32), 0)], inbounds=True)
+            left_imag_ptr = self.builder.gep(left_value, [ir.Constant(ir.IntType(32), 0),
+                                                        ir.Constant(ir.IntType(32), 1)], inbounds=True)
+            left_real = self.builder.load(left_real_ptr)
+            left_imag = self.builder.load(left_imag_ptr)
+
+            # Extract right parts
+            right_real_ptr = self.builder.gep(right_value, [ir.Constant(ir.IntType(32), 0),
+                                                            ir.Constant(ir.IntType(32), 0)], inbounds=True)
+            right_imag_ptr = self.builder.gep(right_value, [ir.Constant(ir.IntType(32), 0),
+                                                            ir.Constant(ir.IntType(32), 1)], inbounds=True)
+            right_real = self.builder.load(right_real_ptr)
+            right_imag = self.builder.load(right_imag_ptr)
+
+            # Compute denominator: c^2 + d^2
+            c2 = self.builder.fmul(right_real, right_real, "c2")
+            d2 = self.builder.fmul(right_imag, right_imag, "d2")
+            denom = self.builder.fadd(c2, d2, "denom")
+
+            # Numerator real: (a*c + b*d)
+            ac = self.builder.fmul(left_real, right_real, "ac")
+            bd = self.builder.fmul(left_imag, right_imag, "bd")
+            num_real = self.builder.fadd(ac, bd, "num_real")
+
+            # Numerator imag: (b*c - a*d)
+            bc = self.builder.fmul(left_imag, right_real, "bc")
+            ad = self.builder.fmul(left_real, right_imag, "ad")
+            num_imag = self.builder.fsub(bc, ad, "num_imag")
+
+            # Divide by denominator
+            res_real = self.builder.fdiv(num_real, denom, "res_real")
+            res_imag = self.builder.fdiv(num_imag, denom, "res_imag")
+
+            # Allocate result struct
+            complex_type = self.struct_types["complex"]
+            res_ptr = self.builder.alloca(complex_type, name="complex_div_res")
+
+            # Store into struct fields
+            res_real_ptr = self.builder.gep(res_ptr, [ir.Constant(ir.IntType(32), 0),
+                                                    ir.Constant(ir.IntType(32), 0)], inbounds=True)
+            res_imag_ptr = self.builder.gep(res_ptr, [ir.Constant(ir.IntType(32), 0),
+                                                    ir.Constant(ir.IntType(32), 1)], inbounds=True)
+            self.builder.store(res_real, res_real_ptr)
+            self.builder.store(res_imag, res_imag_ptr)
+
+            return res_ptr, ir.PointerType(complex_type)
+
+
+
+        
         if isinstance(left_type, ir.DoubleType) or isinstance(right_type, ir.DoubleType):
             if not isinstance(left_type, ir.DoubleType):
                 left_value = self.builder.fpext(left_value, ir.DoubleType()) if isinstance(left_type, ir.FloatType) else self.builder.sitofp(left_value, ir.DoubleType())
@@ -1793,6 +1961,68 @@ class Compiler:
             self.report_error("CallExpression function must be an identifier with a name.")
             return None
         name: str = node.function.value
+
+        if name == "complex":
+            if len(params) != 2:
+                return self.report_error("complex() constructor requires 2 arguments: real and imaginary.")
+
+            real_res = self.resolve_value(params[0])
+            imag_res = self.resolve_value(params[1])
+
+            if real_res is None or imag_res is None:
+                return self.report_error("Could not resolve arguments for complex() constructor.")
+
+            real_val, r_type = real_res
+            imag_val, i_type = imag_res
+
+            double_type = ir.DoubleType()
+            if not isinstance(r_type, ir.DoubleType):
+                real_val = self.builder.sitofp(real_val, double_type) if isinstance(r_type, ir.IntType) else self.builder.fpext(real_val, double_type)
+            if not isinstance(i_type, ir.DoubleType):
+                imag_val = self.builder.sitofp(imag_val, double_type) if isinstance(i_type, ir.IntType) else self.builder.fpext(imag_val, double_type)
+
+            complex_type = self.struct_types["complex"]
+            instance_ptr = self.builder.alloca(complex_type, name="complex_instance")
+
+            real_ptr = self.builder.gep(instance_ptr, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True, name="real_ptr")
+            self.builder.store(real_val, real_ptr)
+
+            imag_ptr = self.builder.gep(instance_ptr, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 1)], inbounds=True, name="imag_ptr")
+            self.builder.store(imag_val, imag_ptr)
+
+            return instance_ptr, ir.PointerType(complex_type)
+
+        # Handle abs(complex_num)
+        if name == "abs":
+            if len(params) != 1:
+                return self.report_error("abs() requires exactly one argument.")
+
+            arg_res = self.resolve_value(params[0])
+            if arg_res is None:
+                return self.report_error("Could not resolve argument for abs().")
+            arg_val, arg_type = arg_res
+            
+            is_complex = isinstance(arg_type, ir.PointerType) and isinstance(arg_type.pointee, ir.IdentifiedStructType) and arg_type.pointee.name == "complex" # type: ignore
+            if not is_complex:
+                return self.report_error("abs() is currently only implemented for complex numbers.")
+
+            real_ptr = self.builder.gep(arg_val, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True)
+            imag_ptr = self.builder.gep(arg_val, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 1)], inbounds=True)
+            real_val = self.builder.load(real_ptr)
+            imag_val = self.builder.load(imag_ptr)
+
+            real_sq = self.builder.fmul(real_val, real_val, "real_sq")
+            imag_sq = self.builder.fmul(imag_val, imag_val, "imag_sq")
+            sum_sq = self.builder.fadd(real_sq, imag_sq, "sum_sq")
+
+            sqrt_func_res = self.env.lookup('sqrt')
+            if sqrt_func_res is None:
+                return self.report_error("sqrt function not found for abs() calculation.")
+            sqrt_func, _ = sqrt_func_res
+            
+            magnitude = self.builder.call(sqrt_func, [sum_sq], "magnitude")
+            return magnitude, ir.DoubleType()
+        
 
         if name in ('cot', 'sec', 'cosec'):
             if len(params) != 1:
