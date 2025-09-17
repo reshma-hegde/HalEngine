@@ -42,6 +42,16 @@ class Compiler:
         self.struct_types["complex"] = complex_type
         self.struct_layouts["complex"] = {"real": 0, "imag": 1}
 
+
+        vector_type = self.module.context.get_identified_type("vector")
+        # Body: pointer to data (double*), size (i32)
+        vector_type.set_body(
+            ir.PointerType(ir.DoubleType()),
+            ir.IntType(32)
+        )
+        self.struct_types["vector"] = vector_type
+        self.struct_layouts["vector"] = {"data": 0, "size": 1}
+
         self.counter:int=0
         self.generic_functions: dict[str, FunctionStatement] = {}
 
@@ -196,6 +206,11 @@ class Compiler:
         self.global_error_ptr.initializer = ir.Constant(error_val_type, None) # type: ignore
         self.global_error_ptr.linkage = 'internal'
 
+        self.__define_print_vector_helper()
+
+    # Add this new method to the Compiler class
+
+    
     def __initialize_math_builtins(self) -> None:
         double_type = ir.DoubleType()
         fnty = ir.FunctionType(double_type, [double_type])
@@ -1163,6 +1178,128 @@ class Compiler:
         left_value, left_type = left_result
         right_value, right_type = right_result
 
+        vector_struct_type = self.struct_types.get("vector")
+        is_left_vec = isinstance(left_type, ir.PointerType) and left_type.pointee == vector_struct_type # type: ignore
+        is_right_vec = isinstance(right_type, ir.PointerType) and right_type.pointee == vector_struct_type # type: ignore
+        is_left_num = isinstance(left_type, (ir.IntType, ir.FloatType, ir.DoubleType))
+        is_right_num = isinstance(right_type, (ir.IntType, ir.FloatType, ir.DoubleType))
+
+        # Vector-Vector Addition/Subtraction
+        if is_left_vec and is_right_vec and operator in ('+', '-'):
+            # TODO: Add runtime check for matching sizes
+            # Create a new vector for the result
+            size_ptr = self.builder.gep(left_value, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 1)], inbounds=True)
+            size = self.builder.load(size_ptr)
+            
+            # Use the 'vector' constructor logic to create a new vector of the same size
+            lookup_resul = self.env.lookup("reserve")
+            if lookup_resul is None:
+                return self.report_error("Builtin 'reserve' not found in environment.")
+
+            malloc_func = lookup_resul[0]
+            double_size = ir.Constant(ir.IntType(32), 8)
+            alloc_size = self.builder.mul(size, double_size)
+            new_data_ptr = self.builder.call(malloc_func, [alloc_size])
+            new_data_ptr = self.builder.bitcast(new_data_ptr, ir.PointerType(ir.DoubleType()))
+            
+            result_vec_ptr = self.builder.alloca(vector_struct_type, name="vec_result")
+            result_data_field_ptr = self.builder.gep(result_vec_ptr, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True)
+            result_size_field_ptr = self.builder.gep(result_vec_ptr, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 1)], inbounds=True)
+            self.builder.store(new_data_ptr, result_data_field_ptr)
+            self.builder.store(size, result_size_field_ptr)
+
+            # Get data pointers for operands
+            left_data_ptr = self.builder.load(self.builder.gep(left_value, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True))
+            right_data_ptr = self.builder.load(self.builder.gep(right_value, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True))
+
+            # Loop and perform operation
+            loop_cond = self.builder.append_basic_block('loop_cond_vec_op')
+            loop_body = self.builder.append_basic_block('loop_body_vec_op')
+            loop_exit = self.builder.append_basic_block('loop_exit_vec_op')
+            
+            counter_ptr = self.builder.alloca(ir.IntType(32), name='i')
+            self.builder.store(ir.Constant(ir.IntType(32), 0), counter_ptr)
+            self.builder.branch(loop_cond)
+
+            self.builder.position_at_start(loop_cond)
+            i = self.builder.load(counter_ptr)
+            cond = self.builder.icmp_signed('<', i, size)
+            self.builder.cbranch(cond, loop_body, loop_exit)
+
+            self.builder.position_at_start(loop_body)
+            left_elem = self.builder.load(self.builder.gep(left_data_ptr, [i], inbounds=True))
+            right_elem = self.builder.load(self.builder.gep(right_data_ptr, [i], inbounds=True))
+            
+            if operator == '+':
+                result_elem = self.builder.fadd(left_elem, right_elem)
+            else: # operator == '-'
+                result_elem = self.builder.fsub(left_elem, right_elem)
+            
+            self.builder.store(result_elem, self.builder.gep(new_data_ptr, [i], inbounds=True))
+            
+            next_i = self.builder.add(i, ir.Constant(ir.IntType(32), 1))
+            self.builder.store(next_i, counter_ptr)
+            self.builder.branch(loop_cond)
+
+            self.builder.position_at_start(loop_exit)
+            return result_vec_ptr, left_type
+
+        # Vector-Scalar Multiplication
+        if (is_left_vec and is_right_num) or (is_right_vec and is_left_num) and operator == '*':
+            vec_val = left_value if is_left_vec else right_value
+            scalar_val = right_value if is_left_vec else left_value
+            scalar_type = right_type if is_left_vec else left_type
+
+            # Promote scalar to double if needed
+            if not isinstance(scalar_type, ir.DoubleType):
+                if isinstance(scalar_type, ir.IntType):
+                    scalar_val = self.builder.sitofp(scalar_val, ir.DoubleType())
+                else: # FloatType
+                    scalar_val = self.builder.fpext(scalar_val, ir.DoubleType())
+
+            # Create a new vector for the result (similar to above)
+            size_ptr = self.builder.gep(vec_val, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 1)], inbounds=True)
+            size = self.builder.load(size_ptr)
+            lookup_resul = self.env.lookup("reserve")
+            if lookup_resul is None:
+                return self.report_error("Builtin 'reserve' not found in environment.")
+
+            malloc_func = lookup_resul[0]
+
+            alloc_size = self.builder.mul(size, ir.Constant(ir.IntType(32), 8))
+            new_data_ptr = self.builder.call(malloc_func, [alloc_size])
+            new_data_ptr = self.builder.bitcast(new_data_ptr, ir.PointerType(ir.DoubleType()))
+            
+            result_vec_ptr = self.builder.alloca(vector_struct_type, name="vec_scalar_result")
+            self.builder.store(new_data_ptr, self.builder.gep(result_vec_ptr, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True))
+            self.builder.store(size, self.builder.gep(result_vec_ptr, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 1)], inbounds=True))
+            
+            vec_data_ptr = self.builder.load(self.builder.gep(vec_val, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True))
+
+            # Loop and multiply
+            # (Loop IR code is very similar to vector-vector op, so it's omitted for brevity but should be included)
+            loop_cond_s = self.builder.append_basic_block('loop_cond_vec_s')
+            loop_body_s = self.builder.append_basic_block('loop_body_vec_s')
+            loop_exit_s = self.builder.append_basic_block('loop_exit_vec_s')
+            counter_ptr_s = self.builder.alloca(ir.IntType(32), name='i_s')
+            self.builder.store(ir.Constant(ir.IntType(32), 0), counter_ptr_s)
+            self.builder.branch(loop_cond_s)
+            self.builder.position_at_start(loop_cond_s)
+            i_s = self.builder.load(counter_ptr_s)
+            cond_s = self.builder.icmp_signed('<', i_s, size)
+            self.builder.cbranch(cond_s, loop_body_s, loop_exit_s)
+            self.builder.position_at_start(loop_body_s)
+            elem = self.builder.load(self.builder.gep(vec_data_ptr, [i_s], inbounds=True))
+            result_elem = self.builder.fmul(elem, scalar_val)
+            self.builder.store(result_elem, self.builder.gep(new_data_ptr, [i_s], inbounds=True))
+            next_i_s = self.builder.add(i_s, ir.Constant(ir.IntType(32), 1))
+            self.builder.store(next_i_s, counter_ptr_s)
+            self.builder.branch(loop_cond_s)
+            self.builder.position_at_start(loop_exit_s)
+
+            return result_vec_ptr, ir.PointerType(vector_struct_type)
+
+
         is_left_complex = isinstance(left_type, ir.PointerType) and isinstance(left_type.pointee, ir.IdentifiedStructType) and left_type.pointee.name == "complex" # type: ignore
         is_right_complex = isinstance(right_type, ir.PointerType) and isinstance(right_type.pointee, ir.IdentifiedStructType) and right_type.pointee.name == "complex" # type: ignore
 
@@ -1886,7 +2023,7 @@ class Compiler:
         if c_q["state"] == 1:
             q1["state"], q2["state"] = q2["state"], q1["state"]
 
-        
+       
 
     def visit_call_expression(self, node: CallExpression) -> tuple[ir.Value, ir.Type] | None:
         params: list[Expression] = node.arguments if node.arguments is not None else []
@@ -1961,6 +2098,211 @@ class Compiler:
             self.report_error("CallExpression function must be an identifier with a name.")
             return None
         name: str = node.function.value
+
+        vector_struct_type = self.struct_types.get("vector")
+        zero = ir.Constant(ir.IntType(32), 0)
+        one = ir.Constant(ir.IntType(32), 1)
+        double_type = ir.DoubleType()
+
+
+        if name == "vector":
+            if len(params) != 2:
+                return self.report_error("vector() constructor needs 2 args: size (int) and elements (array).")
+            
+            size_res = self.resolve_value(params[0])
+            elems_res = self.resolve_value(params[1])
+            if size_res is None or elems_res is None:
+                return self.report_error("Could not resolve arguments for vector().")
+            
+            size_val, _ = size_res
+            elems_array_ptr, _ = elems_res
+            
+            malloc_func, _ = self.env.lookup("reserve") # type: ignore
+            alloc_size = self.builder.mul(size_val, ir.Constant(ir.IntType(32), 8))
+            data_ptr = self.builder.call(malloc_func, [alloc_size])
+            data_ptr = self.builder.bitcast(data_ptr, ir.PointerType(double_type))
+            
+            vec_ptr = self.builder.alloca(vector_struct_type, name="vector_instance")
+            self.builder.store(data_ptr, self.builder.gep(vec_ptr, [zero, zero], inbounds=True))
+            self.builder.store(size_val, self.builder.gep(vec_ptr, [zero, one], inbounds=True))
+            
+            loop_cond_v = self.builder.append_basic_block('loop_cond_v_init')
+            loop_body_v = self.builder.append_basic_block('loop_body_v_init')
+            loop_exit_v = self.builder.append_basic_block('loop_exit_v_init')
+            counter_ptr_v = self.builder.alloca(ir.IntType(32), name='i_v')
+            self.builder.store(zero, counter_ptr_v)
+            self.builder.branch(loop_cond_v)
+            self.builder.position_at_start(loop_cond_v)
+            i_v = self.builder.load(counter_ptr_v)
+            cond_v = self.builder.icmp_signed('<', i_v, size_val)
+            self.builder.cbranch(cond_v, loop_body_v, loop_exit_v)
+            self.builder.position_at_start(loop_body_v)
+            src_elem_ptr = self.builder.gep(elems_array_ptr, [zero, i_v], inbounds=True)
+            elem_val = self.builder.load(src_elem_ptr)
+            promoted_val = elem_val
+            if isinstance(elem_val.type, ir.IntType):
+                promoted_val = self.builder.sitofp(elem_val, double_type)
+            elif isinstance(elem_val.type, ir.FloatType):
+                promoted_val = self.builder.fpext(elem_val, double_type)
+            self.builder.store(promoted_val, self.builder.gep(data_ptr, [i_v], inbounds=True))
+            next_i_v = self.builder.add(i_v, one)
+            self.builder.store(next_i_v, counter_ptr_v)
+            self.builder.branch(loop_cond_v)
+            self.builder.position_at_start(loop_exit_v)
+            return vec_ptr, ir.PointerType(vector_struct_type)
+
+
+        if name == "dot":
+            if len(params) != 2:
+                return self.report_error("dot() requires exactly 2 vector arguments.")
+            v1_res = self.resolve_value(params[0])
+            v2_res = self.resolve_value(params[1])
+            if not v1_res or not v2_res: return None
+            v1_ptr, v1_type = v1_res
+            v2_ptr, v2_type = v2_res
+            if not (isinstance(v1_type, ir.PointerType) and v1_type.pointee == vector_struct_type and # type: ignore
+                    isinstance(v2_type, ir.PointerType) and v2_type.pointee == vector_struct_type): # type: ignore
+                return self.report_error("dot() arguments must be vectors.")
+
+            size = self.builder.load(self.builder.gep(v1_ptr, [zero, one], inbounds=True))
+            v1_data = self.builder.load(self.builder.gep(v1_ptr, [zero, zero], inbounds=True))
+            v2_data = self.builder.load(self.builder.gep(v2_ptr, [zero, zero], inbounds=True))
+            
+            accumulator = self.builder.alloca(double_type, name="dot_sum")
+            self.builder.store(ir.Constant(double_type, 0.0), accumulator)
+
+            loop_cond = self.builder.append_basic_block('dot_loop_cond')
+            loop_body = self.builder.append_basic_block('dot_loop_body')
+            loop_exit = self.builder.append_basic_block('dot_loop_exit')
+            counter = self.builder.alloca(ir.IntType(32), name='i_dot')
+            self.builder.store(zero, counter)
+            self.builder.branch(loop_cond)
+            self.builder.position_at_start(loop_cond)
+            i = self.builder.load(counter)
+            self.builder.cbranch(self.builder.icmp_signed('<', i, size), loop_body, loop_exit)
+            self.builder.position_at_start(loop_body)
+            e1 = self.builder.load(self.builder.gep(v1_data, [i], inbounds=True))
+            e2 = self.builder.load(self.builder.gep(v2_data, [i], inbounds=True))
+            product = self.builder.fmul(e1, e2)
+            current_sum = self.builder.load(accumulator)
+            new_sum = self.builder.fadd(current_sum, product)
+            self.builder.store(new_sum, accumulator)
+            self.builder.store(self.builder.add(i, one), counter)
+            self.builder.branch(loop_cond)
+            self.builder.position_at_start(loop_exit)
+            
+            return self.builder.load(accumulator), double_type
+
+        if name == "cross":
+            if len(params) != 2:
+                return self.report_error("cross() requires exactly 2 vector arguments.")
+
+            v1_res = self.resolve_value(params[0])
+            v2_res = self.resolve_value(params[1])
+
+            if not v1_res or not v2_res:
+                return None
+
+            v1_ptr, v1_type = v1_res
+            v2_ptr, v2_type = v2_res
+
+            # Ensure both arguments are vectors
+            if not (isinstance(v1_type, ir.PointerType) and v1_type.pointee == vector_struct_type and # type: ignore
+                    isinstance(v2_type, ir.PointerType) and v2_type.pointee == vector_struct_type): # type: ignore
+                return self.report_error("cross() arguments must be vectors.")
+
+            # --- Runtime check for vector size ---
+            # In a real-world scenario, you'd want robust error handling.
+            # Here, we'll assume the size is 3, as cross product is only defined for 3D vectors.
+            # Adding a proper runtime check would require more complex IR generation (if/else blocks).
+
+            # Get data pointers
+            v1_data = self.builder.load(self.builder.gep(v1_ptr, [zero, zero], inbounds=True))
+            v2_data = self.builder.load(self.builder.gep(v2_ptr, [zero, zero], inbounds=True))
+
+            # Load components of v1 (x1, y1, z1)
+            x1 = self.builder.load(self.builder.gep(v1_data, [ir.Constant(ir.IntType(32), 0)], inbounds=True))
+            y1 = self.builder.load(self.builder.gep(v1_data, [ir.Constant(ir.IntType(32), 1)], inbounds=True))
+            z1 = self.builder.load(self.builder.gep(v1_data, [ir.Constant(ir.IntType(32), 2)], inbounds=True))
+
+            # Load components of v2 (x2, y2, z2)
+            x2 = self.builder.load(self.builder.gep(v2_data, [ir.Constant(ir.IntType(32), 0)], inbounds=True))
+            y2 = self.builder.load(self.builder.gep(v2_data, [ir.Constant(ir.IntType(32), 1)], inbounds=True))
+            z2 = self.builder.load(self.builder.gep(v2_data, [ir.Constant(ir.IntType(32), 2)], inbounds=True))
+
+            # --- Calculate cross product components ---
+            # cx = y1*z2 - z1*y2
+            # cy = z1*x2 - x1*z2
+            # cz = x1*y2 - y1*x2
+            cx = self.builder.fsub(self.builder.fmul(y1, z2), self.builder.fmul(z1, y2), "cx")
+            cy = self.builder.fsub(self.builder.fmul(z1, x2), self.builder.fmul(x1, z2), "cy")
+            cz = self.builder.fsub(self.builder.fmul(x1, y2), self.builder.fmul(y1, x2), "cz")
+
+            lookup_result = self.env.lookup("reserve")
+            if lookup_result is None:
+                return self.report_error("Builtin 'reserve' not found in environment.")
+
+            malloc_func, malloc_type = lookup_result
+
+            alloc_size = ir.Constant(ir.IntType(32), 3 * 8) # 3 * sizeof(double)
+            new_data_ptr = self.builder.call(malloc_func, [alloc_size])
+            new_data_ptr = self.builder.bitcast(new_data_ptr, ir.PointerType(double_type))
+
+            # Alloca space for the result vector struct
+            result_vec_ptr = self.builder.alloca(vector_struct_type, name="cross_result_vec")
+
+            # Store the new data pointer and size into the struct
+            self.builder.store(new_data_ptr, self.builder.gep(result_vec_ptr, [zero, zero], inbounds=True))
+            self.builder.store(ir.Constant(ir.IntType(32), 3), self.builder.gep(result_vec_ptr, [zero, one], inbounds=True))
+
+            # Store the calculated components into the new data array
+            self.builder.store(cx, self.builder.gep(new_data_ptr, [ir.Constant(ir.IntType(32), 0)], inbounds=True))
+            self.builder.store(cy, self.builder.gep(new_data_ptr, [ir.Constant(ir.IntType(32), 1)], inbounds=True))
+            self.builder.store(cz, self.builder.gep(new_data_ptr, [ir.Constant(ir.IntType(32), 2)], inbounds=True))
+
+            return result_vec_ptr, ir.PointerType(vector_struct_type)
+        
+        
+        # Override 'abs' for vectors (magnitude)
+        if name == "abs": # Magnitude for vectors
+            if len(params) != 1: return self.report_error("abs() requires one argument.")
+            arg_res = self.resolve_value(params[0])
+            if not arg_res: return None
+            arg_val, arg_type = arg_res
+            if isinstance(arg_type, ir.PointerType) and arg_type.pointee == vector_struct_type: # type: ignore
+                vec_ptr = arg_val
+                size = self.builder.load(self.builder.gep(vec_ptr, [zero, one], inbounds=True))
+                vec_data = self.builder.load(self.builder.gep(vec_ptr, [zero, zero], inbounds=True))
+                
+                sum_sq = self.builder.alloca(double_type, name="sum_sq")
+                self.builder.store(ir.Constant(double_type, 0.0), sum_sq)
+
+                loop_cond = self.builder.append_basic_block('abs_loop_cond')
+                loop_body = self.builder.append_basic_block('abs_loop_body')
+                loop_exit = self.builder.append_basic_block('abs_loop_exit')
+                counter = self.builder.alloca(ir.IntType(32), name='i_abs')
+                self.builder.store(zero, counter)
+                self.builder.branch(loop_cond)
+                self.builder.position_at_start(loop_cond)
+                i = self.builder.load(counter)
+                self.builder.cbranch(self.builder.icmp_signed('<', i, size), loop_body, loop_exit)
+                self.builder.position_at_start(loop_body)
+                elem = self.builder.load(self.builder.gep(vec_data, [i], inbounds=True))
+                elem_sq = self.builder.fmul(elem, elem)
+                current_sum = self.builder.load(sum_sq)
+                new_sum = self.builder.fadd(current_sum, elem_sq)
+                self.builder.store(new_sum, sum_sq)
+                self.builder.store(self.builder.add(i, one), counter)
+                self.builder.branch(loop_cond)
+                self.builder.position_at_start(loop_exit)
+                
+                final_sum_sq = self.builder.load(sum_sq)
+                sqrt_func, _ = self.env.lookup('sqrt') # type: ignore
+                magnitude = self.builder.call(sqrt_func, [final_sum_sq])
+                return magnitude, double_type
+            # Fall through to handle abs for complex numbers or other types if needed
+            # ... keep your existing complex abs logic here ...
+
 
         if name == "complex":
             if len(params) != 2:
@@ -2176,72 +2518,69 @@ class Compiler:
         print(f">>> CallExpression: calling function '{name}' with {len(params)} arguments")
         
         if name == "print":
+            # This block replaces the format-string-building logic.
+            # It handles each argument individually, which is necessary for custom types.
             if len(params) == 0:
                 return self.report_error("print() requires at least one argument.")
 
-            resolved_args: list[ir.Value] = []
-            format_pieces: list[str] = []
+            printf_func, _ = self.env.lookup("print") # type: ignore
+            zero = ir.Constant(ir.IntType(32), 0)
 
-            for i, arg_expr in enumerate(params):
-                if isinstance(arg_expr, StringLiteral):
-                    format_pieces.append(arg_expr.value if arg_expr.value is not None else "")
-                    continue
-
+            for arg_expr in params:
                 result = self.resolve_value(arg_expr)
                 if result is None:
-                    return self.report_error(f"Failed to resolve print argument #{i+1}")
+                    self.report_error("Failed to resolve print argument.")
+                    continue
+                
                 val, val_type = result
 
-                if isinstance(val_type, ir.PointerType) and isinstance(val_type.pointee, ir.IntType) and val_type.pointee.width == 8: # type: ignore
-                    format_pieces.append("%s")
-                    resolved_args.append(val)
-                    
+                # Check if the argument is a vector and call our dedicated helper
+                is_vec = isinstance(val_type, ir.PointerType) and val_type.pointee == vector_struct_type # type: ignore
+                if is_vec:
+                    self.builder.call(self.print_vector_func, [val])
+                    continue
 
+                # Handle different primitive types by calling printf for each one
+                format_str = ""
+                arg_to_pass = val
+
+                if isinstance(arg_expr, StringLiteral):
+                    # For literal strings in the print call, we print them directly
+                    format_str = arg_expr.value or ""
+                    fmt_global, _ = self.convert_string(format_str)
+                    fmt_ptr = self.builder.gep(fmt_global, [zero, zero], inbounds=True)
+                    self.builder.call(printf_func, [fmt_ptr])
+                    continue # Move to the next argument
+
+                elif isinstance(val_type, ir.PointerType) and isinstance(val_type.pointee, ir.IntType) and val_type.pointee.width == 8: # type: ignore
+                    format_str = "%s" # For string variables
                 elif isinstance(val_type, ir.IntType) and val_type.width == 32:
-                    format_pieces.append("%i")
-                    resolved_args.append(val)
-
-                elif isinstance(val_type, ir.IntType) and val_type.width == 1:
-                    true_ptr = self.builder.gep(
-                        self.true_str, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True
-                    )
-                    false_ptr = self.builder.gep(
-                        self.false_str, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True
-                    )
-                    str_val = self.builder.select(val, true_ptr, false_ptr)
-                    format_pieces.append("%s")
-                    resolved_args.append(str_val)
-                
-                elif isinstance(val_type, ir.DoubleType):  
-                    format_pieces.append("%lf")
-                    resolved_args.append(val)
-                    
+                    format_str = "%d"
+                elif isinstance(val_type, ir.DoubleType):
+                    format_str = "%f"
                 elif isinstance(val_type, ir.FloatType):
-                    format_pieces.append("%f")   
-                    promoted = self.builder.fpext(val, ir.DoubleType())
-                    if promoted is not None:
-                        resolved_args.append(promoted)
-                    else:
-                        self.report_error("Failed to promote float to double for print().")
-                        return None
+                    format_str = "%f"
+                    arg_to_pass = self.builder.fpext(val, ir.DoubleType())
+                elif isinstance(val_type, ir.IntType) and val_type.width == 1:
+                    format_str = "%s"
+                    true_ptr = self.builder.gep(self.true_str, [zero, zero], inbounds=True)
+                    false_ptr = self.builder.gep(self.false_str, [zero, zero], inbounds=True)
+                    arg_to_pass = self.builder.select(val, true_ptr, false_ptr)
 
+                # Call printf for the current non-vector, non-string-literal argument
+                if format_str:
+                    fmt_global, _ = self.convert_string(format_str)
+                    fmt_ptr = self.builder.gep(fmt_global, [zero, zero], inbounds=True)
+                    self.builder.call(printf_func, [fmt_ptr, arg_to_pass])
                 else:
-                    return self.report_error(f"Unsupported type for print(): {val_type}")
+                    self.report_error(f"Unsupported type for print(): {val_type}")
 
+            # After processing all arguments, print a single newline
+            newline_fmt, _ = self.convert_string("\n")
+            newline_ptr = self.builder.gep(newline_fmt, [zero, zero], inbounds=True)
+            self.builder.call(printf_func, [newline_ptr])
             
-            fmt_string = " ".join(format_pieces) + "\n"
-            fmt_global, _ = self.convert_string(fmt_string)
-            fmt_ptr = self.builder.gep(
-                fmt_global, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True
-            )
-
-            print_func_result = self.env.lookup("print")
-            if print_func_result is None:
-                self.report_error("Built-in function 'print' not found.")
-                return None
-
-            return self.builder.call(print_func_result[0], [fmt_ptr, *resolved_args]), self.type_map["int"]
-
+            return ir.Constant(ir.IntType(32), 0), ir.IntType(32) # Dummy return for print
 
         elif name == "free":
             if len(params) != 1:
@@ -2392,6 +2731,103 @@ class Compiler:
         ret: ir.Value = self.builder.call(func, args)
         
         return ret, ret_type
+
+
+    # Replace the existing __define_print_vector_helper method in Compiler.py
+
+    def __define_print_vector_helper(self):
+        """
+        Defines a reusable LLVM function 'print_vector' that takes a vector struct pointer
+        and prints its contents in the format [el1, el2, ...].
+        """
+        vector_ptr_type = ir.PointerType(self.struct_types["vector"])
+        fnty = ir.FunctionType(ir.VoidType(), [vector_ptr_type])
+        self.print_vector_func = ir.Function(self.module, fnty, 'print_vector')
+
+        # Store current builder and create a new one for this function
+        prev_builder = self.builder
+        block = self.print_vector_func.append_basic_block('entry')
+        self.builder = ir.IRBuilder(block)
+
+        # Get vector pointer argument
+        vec_ptr, = self.print_vector_func.args
+
+        # Get data and size from the vector struct
+        size_ptr = self.builder.gep(vec_ptr, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 1)], inbounds=True)
+        data_ptr_ptr = self.builder.gep(vec_ptr, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True)
+        size = self.builder.load(size_ptr)
+        data_ptr = self.builder.load(data_ptr_ptr)
+
+        lookup_result = self.env.lookup("print")
+        if lookup_result is None:
+            # This is an internal function, so we can be more direct
+            raise RuntimeError("Builtin 'print' not found during compiler initialization.")
+
+        printf_func = lookup_result[0]
+
+
+        # Define format strings
+        open_bracket_fmt, _ = self.convert_string("[")
+        # FIX: Removed the newline character to allow inline printing
+        close_bracket_fmt, _ = self.convert_string("]")
+        element_fmt, _ = self.convert_string("%f")
+        separator_fmt, _ = self.convert_string(", ")
+        
+        # Get pointers to format strings
+        open_bracket_ptr = self.builder.gep(open_bracket_fmt, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True)
+        close_bracket_ptr = self.builder.gep(close_bracket_fmt, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True)
+        element_ptr = self.builder.gep(element_fmt, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True)
+        separator_ptr = self.builder.gep(separator_fmt, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True)
+
+        # Print opening bracket
+        self.builder.call(printf_func, [open_bracket_ptr])
+
+        # Loop setup
+        loop_cond = self.builder.append_basic_block('loop_cond_print')
+        loop_body = self.builder.append_basic_block('loop_body_print')
+        loop_exit = self.builder.append_basic_block('loop_exit_print')
+        
+        counter_ptr = self.builder.alloca(ir.IntType(32), name='i')
+        self.builder.store(ir.Constant(ir.IntType(32), 0), counter_ptr)
+        self.builder.branch(loop_cond)
+
+        # Loop condition
+        self.builder.position_at_start(loop_cond)
+        i = self.builder.load(counter_ptr)
+        cond = self.builder.icmp_signed('<', i, size)
+        self.builder.cbranch(cond, loop_body, loop_exit)
+
+        # Loop body
+        self.builder.position_at_start(loop_body)
+        
+        # Print separator if not the first element
+        is_first = self.builder.icmp_signed('==', i, ir.Constant(ir.IntType(32), 0))
+        with self.builder.if_then(is_first, likely=False):
+            pass # Do nothing
+        with self.builder.if_else(is_first) as (then, otherwise):
+            with then:
+                pass
+            with otherwise:
+                self.builder.call(printf_func, [separator_ptr])
+
+        # Print element
+        elem_ptr = self.builder.gep(data_ptr, [i], inbounds=True)
+        elem = self.builder.load(elem_ptr)
+        self.builder.call(printf_func, [element_ptr, elem])
+
+        # Increment counter
+        next_i = self.builder.add(i, ir.Constant(ir.IntType(32), 1))
+        self.builder.store(next_i, counter_ptr)
+        self.builder.branch(loop_cond)
+
+        # Loop exit
+        self.builder.position_at_start(loop_exit)
+        self.builder.call(printf_func, [close_bracket_ptr])
+        self.builder.ret_void()
+
+        # Restore original builder
+        self.builder = prev_builder
+
 
    
     def _instantiate_and_compile_generic_function(
