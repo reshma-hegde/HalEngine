@@ -1,0 +1,31 @@
+fun show_data(var x,var y,var z,var d,array e)
+    
+   
+    print("integer value:",x);
+    print("float value:",y);
+    print("double value:",z);
+    print("string value:",d);
+    var i=0;
+    print("array values");
+    while i<4
+    print(e[i]);
+    i++;
+    elihw
+    
+
+    return 1;
+nuf
+
+fun main()
+    var a = 10;
+    var b=24.48;
+    var c=2394.39d;
+    var d="hello";
+    array e=[1,2,3,4];
+
+ 
+    
+    show_data(a,b,c,d,e);
+
+    return 0;
+nuf

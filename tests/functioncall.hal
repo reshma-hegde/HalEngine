@@ -4,7 +4,7 @@ nuf
 
 
 fun main()
-    var result = add(1.5,4.5);
+    var result = add(1.4,4.5);
     var a=10;
     print(result);
     var c=3.14;

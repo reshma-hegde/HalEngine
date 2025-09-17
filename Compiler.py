@@ -37,6 +37,7 @@ class Compiler:
         }
         
         self.counter:int=0
+        self.generic_functions: dict[str, FunctionStatement] = {}
 
         self.exception_handler_stack: list[ir.Block] = []
         self.global_error_ptr: Optional[ir.GlobalVariable] = None
@@ -264,7 +265,40 @@ class Compiler:
             case NodeType.NullLiteral: 
                 self.visit_null_literal(cast(NullLiteral, node))
 
-  
+    def _get_global_env(self) -> Environment:
+        env = self.env
+        while env.parent:
+            env = env.parent
+        return env    
+
+    def visit_program(self, node: Program) -> None:
+        for stmt in node.statements:
+            t = stmt.type()
+            if t in (NodeType.ClassStatement, NodeType.StructStatement):
+                self.compile(stmt)
+
+        concrete_statements = []
+        for stmt in node.statements:
+            
+            if stmt.type() in (NodeType.ClassStatement, NodeType.StructStatement):
+                continue
+            
+            is_generic = False
+            if isinstance(stmt, FunctionStatement):
+                if stmt.parameters:
+                    for param in stmt.parameters:
+                        if param.value_type == 'var':
+                            is_generic = True
+                            break
+            
+            if is_generic and isinstance(stmt, FunctionStatement) and stmt.name and stmt.name.value:
+                self.generic_functions[stmt.name.value] = stmt
+            else:
+                concrete_statements.append(stmt)
+        
+        for stmt in concrete_statements:
+            self.compile(stmt)
+
 
     def visit_branch_statement(self, node: BranchStatement) -> None:
        
@@ -388,21 +422,8 @@ class Compiler:
         self.env.define(merge_var_name, result_array_ptr, result_array_ptr.type)
         if merge_var_name:
              self.array_lengths[merge_var_name] = num_outcomes
-        
-
-    def visit_program(self, node: Program) -> None:
     
-        for stmt in node.statements:
-            t = stmt.type()
-            
-            if t in (NodeType.ClassStatement, NodeType.StructStatement):
-                self.compile(stmt)
-
-        
-        for stmt in node.statements:
-            t = stmt.type()
-            if t not in (NodeType.ClassStatement, NodeType.StructStatement):
-                self.compile(stmt)
+              
         
 
     def visit_expression_statement(self, node: ExpressionStatement) -> None:
@@ -528,7 +549,10 @@ class Compiler:
             else:
                 param_types.append(ir.IntType(32))  
                 
-   
+
+        global_env=self._get_global_env()
+        previous_builder = self.builder
+        previous_env = self.env
         func_type = ir.FunctionType(ir.VoidType(), param_types)
         dummy_module = ir.Module(name=f"{name}_dummy_module")
         dummy_func = ir.Function(dummy_module, func_type, name=f"{name}_dummy_temp")
@@ -536,12 +560,11 @@ class Compiler:
 
 
         previous_module = self.module
-        previous_builder = self.builder
-        previous_env = self.env
+        
 
         self.module = dummy_module
         self.builder = ir.IRBuilder(dummy_block)
-        self.env = Environment(parent=self.env)
+        self.env = Environment(parent=global_env)
         
         self.env.define(name, dummy_func, ir.VoidType()) 
         
@@ -2053,6 +2076,38 @@ class Compiler:
 
         result = self.env.lookup(name)
         if result is None:
+            if name in self.generic_functions:
+                generic_ast = self.generic_functions[name]
+                
+                arg_vals: list[ir.Value] = []
+                arg_types: list[ir.Type] = []
+                for arg_expr in params:
+                    resolved_arg = self.resolve_value(arg_expr)
+                    if resolved_arg is None:
+                        self.report_error(f"Could not resolve argument for generic call to '{name}'")
+                        return None
+                    val, typ = resolved_arg
+                    arg_vals.append(val)
+                    arg_types.append(typ)
+                
+                
+                type_suffixes = [str(t).replace('%', '').replace(' ', '_').replace('*', 'ptr') for t in arg_types]
+                mangled_name = f"{name}_{'_'.join(type_suffixes)}"
+
+                
+                instance_result = self.env.lookup(mangled_name)
+                if instance_result:
+                    func, ret_type = instance_result
+                    return self.builder.call(func, arg_vals), ret_type
+                
+                
+                new_func_result = self._instantiate_and_compile_generic_function(generic_ast, mangled_name, arg_types)
+                if new_func_result is None:
+                    self.report_error(f"Failed to create a version of function '{name}' for types: {type_suffixes}")
+                    return None
+                
+                new_func, ret_type = new_func_result
+                return self.builder.call(new_func, arg_vals), ret_type
             self.report_error(f"Function '{name}' not found in environment.")
             return None
         assert result is not None  
@@ -2108,7 +2163,94 @@ class Compiler:
         
         return ret, ret_type
 
+   
+    def _instantiate_and_compile_generic_function(
+        self, 
+        node: FunctionStatement, 
+        mangled_name: str, 
+        param_types: list[ir.Type]
+    ) -> Optional[tuple[ir.Function, ir.Type]]:
+        
+        if node.name is None or node.name.value is None or node.body is None:
+            return None
+        
+        name: str = node.name.value
+        body: BlockStatement = node.body
+        params: list[FunctionParameter] = node.parameters or []
+        param_names: list[str] = [p.name for p in params if p.name]
 
+        global_env = self._get_global_env()
+
+        dummy_func_type = ir.FunctionType(ir.VoidType(), param_types)
+        dummy_module = ir.Module(name=f"{mangled_name}_dummy")
+        dummy_func = ir.Function(dummy_module, dummy_func_type, name=f"{mangled_name}_dummy_func")
+        dummy_block = dummy_func.append_basic_block("entry")
+
+        caller_builder = self.builder
+        caller_env = self.env
+        
+        
+        self.builder = ir.IRBuilder(dummy_block)
+        
+        self.env = Environment(parent=global_env)
+
+        for i, param_name in enumerate(param_names):
+            dummy_alloca = self.builder.alloca(param_types[i])
+            self.env.define(param_name, dummy_alloca, param_types[i])
+
+        self.compile(body)
+        
+        inferred_type = "void"
+        if node.return_type:
+            inferred_type = node.return_type
+        else:
+            for stmt in body.statements:
+                if isinstance(stmt, ReturnStatement) and stmt.return_value is not None:
+                    result = self.resolve_value(stmt.return_value)
+                    if result:
+                        _, inferred_ir_type = result
+                        if isinstance(inferred_ir_type, ir.IntType) and inferred_ir_type.width == 1: inferred_type = "bool"
+                        elif isinstance(inferred_ir_type, ir.IntType): inferred_type = "int"
+                        elif isinstance(inferred_ir_type, ir.FloatType): inferred_type = "float"
+                        elif isinstance(inferred_ir_type, ir.DoubleType): inferred_type = "double"
+                        elif isinstance(inferred_ir_type, ir.PointerType): inferred_type = "array"
+                        break
+        
+        return_ir_type = self.type_map.get(inferred_type, ir.IntType(32).as_pointer() if inferred_type == "array" else ir.VoidType())
+        
+        self.builder = caller_builder
+        self.env = caller_env
+
+        func_type = ir.FunctionType(return_ir_type, param_types)
+        func = ir.Function(self.module, func_type, name=mangled_name)
+        self.env.define(mangled_name, func, return_ir_type)
+
+        caller_builder = self.builder
+        caller_env = self.env
+        was_in_main = self.is_in_main
+        
+        self.is_in_main = False
+        block = func.append_basic_block(f'{mangled_name}_entry')
+        self.builder = ir.IRBuilder(block)
+        self.env = Environment(parent=global_env, name=mangled_name)
+        
+        for i, param_name in enumerate(param_names):
+            ptr = self.builder.alloca(param_types[i], name=param_name)
+            self.builder.store(func.args[i], ptr)
+            self.env.define(param_name, ptr, param_types[i])
+        
+        self.compile(body)
+        
+        if self.builder.block is not None and not self.builder.block.is_terminated:
+            if inferred_type == "void":
+                self.builder.ret_void()
+
+        self.builder = caller_builder
+        self.env = caller_env
+        self.is_in_main = was_in_main
+
+        return func, return_ir_type
+    
     def visit_reserve_call(self, node: ReserveCall) -> tuple[ir.Value, ir.Type] | None:
         size_result = self.resolve_value(node.size_expr)
         if size_result is None:
@@ -2615,7 +2757,7 @@ class Compiler:
         member_types: list[ir.Type] = []
         member_layout: dict[str, int] = {}
         
-        # Handle inheritance
+        # handle inheritance
         parent_name = None
         if node.parent:
             parent_name = node.parent.value
