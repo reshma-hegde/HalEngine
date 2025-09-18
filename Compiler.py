@@ -44,7 +44,6 @@ class Compiler:
 
 
         vector_type = self.module.context.get_identified_type("vector")
-        # Body: pointer to data (double*), size (i32)
         vector_type.set_body(
             ir.PointerType(ir.DoubleType()),
             ir.IntType(32)
@@ -208,7 +207,6 @@ class Compiler:
 
         self.__define_print_vector_helper()
 
-    # Add this new method to the Compiler class
 
     
     def __initialize_math_builtins(self) -> None:
@@ -1191,7 +1189,6 @@ class Compiler:
                 self.report_error(f"Cannot perform '{operator}' on hypocrisy variables of different underlying types.")
                 return None
 
-            # Extract 'seen' and 'truth' values from both operands
             left_seen_ptr = self.builder.gep(left_value, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True)
             left_truth_ptr = self.builder.gep(left_value, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 1)], inbounds=True)
             left_seen = self.builder.load(left_seen_ptr, "left_seen")
@@ -1202,12 +1199,10 @@ class Compiler:
             right_seen = self.builder.load(right_seen_ptr, "right_seen")
             right_truth = self.builder.load(right_truth_ptr, "right_truth")
             
-            # Determine if the component type is floating-point
             is_float_op = isinstance(left_seen.type, (ir.FloatType, ir.DoubleType))
             
             result_seen, result_truth = None, None
 
-            # Perform the operation component-wise
             op_map = {
                 '+': (self.builder.fadd, self.builder.add),
                 '-': (self.builder.fsub, self.builder.sub),
@@ -1225,11 +1220,9 @@ class Compiler:
             result_seen = op_func(left_seen, right_seen, "seen_res")
             result_truth = op_func(left_truth, right_truth, "truth_res")
 
-            # Create a new hypocrisy variable to store the result
             result_struct_type = left_type.pointee # type: ignore
             result_ptr = self.builder.alloca(result_struct_type, name="hypocrisy_res")
 
-            # Store the computed values into the new variable
             self.builder.store(result_seen, self.builder.gep(result_ptr, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)]))
             self.builder.store(result_truth, self.builder.gep(result_ptr, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 1)]))
 
@@ -1241,14 +1234,10 @@ class Compiler:
         is_left_num = isinstance(left_type, (ir.IntType, ir.FloatType, ir.DoubleType))
         is_right_num = isinstance(right_type, (ir.IntType, ir.FloatType, ir.DoubleType))
 
-        # Vector-Vector Addition/Subtraction
         if is_left_vec and is_right_vec and operator in ('+', '-'):
-            # TODO: Add runtime check for matching sizes
-            # Create a new vector for the result
             size_ptr = self.builder.gep(left_value, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 1)], inbounds=True)
             size = self.builder.load(size_ptr)
             
-            # Use the 'vector' constructor logic to create a new vector of the same size
             lookup_resul = self.env.lookup("reserve")
             if lookup_resul is None:
                 return self.report_error("Builtin 'reserve' not found in environment.")
@@ -1265,11 +1254,9 @@ class Compiler:
             self.builder.store(new_data_ptr, result_data_field_ptr)
             self.builder.store(size, result_size_field_ptr)
 
-            # Get data pointers for operands
             left_data_ptr = self.builder.load(self.builder.gep(left_value, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True))
             right_data_ptr = self.builder.load(self.builder.gep(right_value, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True))
 
-            # Loop and perform operation
             loop_cond = self.builder.append_basic_block('loop_cond_vec_op')
             loop_body = self.builder.append_basic_block('loop_body_vec_op')
             loop_exit = self.builder.append_basic_block('loop_exit_vec_op')
@@ -1289,7 +1276,7 @@ class Compiler:
             
             if operator == '+':
                 result_elem = self.builder.fadd(left_elem, right_elem)
-            else: # operator == '-'
+            else: 
                 result_elem = self.builder.fsub(left_elem, right_elem)
             
             self.builder.store(result_elem, self.builder.gep(new_data_ptr, [i], inbounds=True))
@@ -1301,20 +1288,17 @@ class Compiler:
             self.builder.position_at_start(loop_exit)
             return result_vec_ptr, left_type
 
-        # Vector-Scalar Multiplication
         if (is_left_vec and is_right_num) or (is_right_vec and is_left_num) and operator == '*':
             vec_val = left_value if is_left_vec else right_value
             scalar_val = right_value if is_left_vec else left_value
             scalar_type = right_type if is_left_vec else left_type
 
-            # Promote scalar to double if needed
             if not isinstance(scalar_type, ir.DoubleType):
                 if isinstance(scalar_type, ir.IntType):
                     scalar_val = self.builder.sitofp(scalar_val, ir.DoubleType())
-                else: # FloatType
+                else: 
                     scalar_val = self.builder.fpext(scalar_val, ir.DoubleType())
 
-            # Create a new vector for the result (similar to above)
             size_ptr = self.builder.gep(vec_val, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 1)], inbounds=True)
             size = self.builder.load(size_ptr)
             lookup_resul = self.env.lookup("reserve")
@@ -1333,8 +1317,6 @@ class Compiler:
             
             vec_data_ptr = self.builder.load(self.builder.gep(vec_val, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True))
 
-            # Loop and multiply
-            # (Loop IR code is very similar to vector-vector op, so it's omitted for brevity but should be included)
             loop_cond_s = self.builder.append_basic_block('loop_cond_vec_s')
             loop_body_s = self.builder.append_basic_block('loop_body_vec_s')
             loop_exit_s = self.builder.append_basic_block('loop_exit_vec_s')
@@ -1389,7 +1371,6 @@ class Compiler:
             return res_ptr, ir.PointerType(complex_type)
         
         if is_left_complex and is_right_complex and operator == '-':
-            # Extract left parts
             left_real_ptr = self.builder.gep(left_value, [ir.Constant(ir.IntType(32), 0),
                                                         ir.Constant(ir.IntType(32), 0)], inbounds=True)
             left_imag_ptr = self.builder.gep(left_value, [ir.Constant(ir.IntType(32), 0),
@@ -1397,7 +1378,6 @@ class Compiler:
             left_real = self.builder.load(left_real_ptr)
             left_imag = self.builder.load(left_imag_ptr)
 
-            # Extract right parts
             right_real_ptr = self.builder.gep(right_value, [ir.Constant(ir.IntType(32), 0),
                                                             ir.Constant(ir.IntType(32), 0)], inbounds=True)
             right_imag_ptr = self.builder.gep(right_value, [ir.Constant(ir.IntType(32), 0),
@@ -1405,15 +1385,12 @@ class Compiler:
             right_real = self.builder.load(right_real_ptr)
             right_imag = self.builder.load(right_imag_ptr)
 
-            # Perform subtraction
             res_real = self.builder.fsub(left_real, right_real, "res_real")
             res_imag = self.builder.fsub(left_imag, right_imag, "res_imag")
 
-            # Allocate result struct
             complex_type = self.struct_types["complex"]
             res_ptr = self.builder.alloca(complex_type, name="complex_sub_res")
 
-            # Store into struct fields
             res_real_ptr = self.builder.gep(res_ptr, [ir.Constant(ir.IntType(32), 0),
                                                     ir.Constant(ir.IntType(32), 0)], inbounds=True)
             res_imag_ptr = self.builder.gep(res_ptr, [ir.Constant(ir.IntType(32), 0),
@@ -1424,7 +1401,6 @@ class Compiler:
             return res_ptr, ir.PointerType(complex_type)
         
         if is_left_complex and is_right_complex and operator == '*':
-            # Extract left parts
             left_real_ptr = self.builder.gep(left_value, [ir.Constant(ir.IntType(32), 0),
                                                         ir.Constant(ir.IntType(32), 0)], inbounds=True)
             left_imag_ptr = self.builder.gep(left_value, [ir.Constant(ir.IntType(32), 0),
@@ -1432,7 +1408,6 @@ class Compiler:
             left_real = self.builder.load(left_real_ptr)
             left_imag = self.builder.load(left_imag_ptr)
 
-            # Extract right parts
             right_real_ptr = self.builder.gep(right_value, [ir.Constant(ir.IntType(32), 0),
                                                             ir.Constant(ir.IntType(32), 0)], inbounds=True)
             right_imag_ptr = self.builder.gep(right_value, [ir.Constant(ir.IntType(32), 0),
@@ -1440,7 +1415,6 @@ class Compiler:
             right_real = self.builder.load(right_real_ptr)
             right_imag = self.builder.load(right_imag_ptr)
 
-            # Perform multiplication: (a*c - b*d), (a*d + b*c)
             ac = self.builder.fmul(left_real, right_real, "ac")
             bd = self.builder.fmul(left_imag, right_imag, "bd")
             ad = self.builder.fmul(left_real, right_imag, "ad")
@@ -1449,11 +1423,9 @@ class Compiler:
             res_real = self.builder.fsub(ac, bd, "res_real")
             res_imag = self.builder.fadd(ad, bc, "res_imag")
 
-            # Allocate result struct
             complex_type = self.struct_types["complex"]
             res_ptr = self.builder.alloca(complex_type, name="complex_mul_res")
 
-            # Store into struct fields
             res_real_ptr = self.builder.gep(res_ptr, [ir.Constant(ir.IntType(32), 0),
                                                     ir.Constant(ir.IntType(32), 0)], inbounds=True)
             res_imag_ptr = self.builder.gep(res_ptr, [ir.Constant(ir.IntType(32), 0),
@@ -1464,7 +1436,6 @@ class Compiler:
             return res_ptr, ir.PointerType(complex_type)
         
         if is_left_complex and is_right_complex and operator == '/':
-            # Extract left parts
             left_real_ptr = self.builder.gep(left_value, [ir.Constant(ir.IntType(32), 0),
                                                         ir.Constant(ir.IntType(32), 0)], inbounds=True)
             left_imag_ptr = self.builder.gep(left_value, [ir.Constant(ir.IntType(32), 0),
@@ -1472,7 +1443,6 @@ class Compiler:
             left_real = self.builder.load(left_real_ptr)
             left_imag = self.builder.load(left_imag_ptr)
 
-            # Extract right parts
             right_real_ptr = self.builder.gep(right_value, [ir.Constant(ir.IntType(32), 0),
                                                             ir.Constant(ir.IntType(32), 0)], inbounds=True)
             right_imag_ptr = self.builder.gep(right_value, [ir.Constant(ir.IntType(32), 0),
@@ -1480,30 +1450,24 @@ class Compiler:
             right_real = self.builder.load(right_real_ptr)
             right_imag = self.builder.load(right_imag_ptr)
 
-            # Compute denominator: c^2 + d^2
             c2 = self.builder.fmul(right_real, right_real, "c2")
             d2 = self.builder.fmul(right_imag, right_imag, "d2")
             denom = self.builder.fadd(c2, d2, "denom")
 
-            # Numerator real: (a*c + b*d)
             ac = self.builder.fmul(left_real, right_real, "ac")
             bd = self.builder.fmul(left_imag, right_imag, "bd")
             num_real = self.builder.fadd(ac, bd, "num_real")
 
-            # Numerator imag: (b*c - a*d)
             bc = self.builder.fmul(left_imag, right_real, "bc")
             ad = self.builder.fmul(left_real, right_imag, "ad")
             num_imag = self.builder.fsub(bc, ad, "num_imag")
 
-            # Divide by denominator
             res_real = self.builder.fdiv(num_real, denom, "res_real")
             res_imag = self.builder.fdiv(num_imag, denom, "res_imag")
 
-            # Allocate result struct
             complex_type = self.struct_types["complex"]
             res_ptr = self.builder.alloca(complex_type, name="complex_div_res")
 
-            # Store into struct fields
             res_real_ptr = self.builder.gep(res_ptr, [ir.Constant(ir.IntType(32), 0),
                                                     ir.Constant(ir.IntType(32), 0)], inbounds=True)
             res_imag_ptr = self.builder.gep(res_ptr, [ir.Constant(ir.IntType(32), 0),
@@ -2225,39 +2189,54 @@ class Compiler:
             loop_cond_v = self.builder.append_basic_block('loop_cond_v_init')
             loop_body_v = self.builder.append_basic_block('loop_body_v_init')
             loop_exit_v = self.builder.append_basic_block('loop_exit_v_init')
+            
             counter_ptr_v = self.builder.alloca(ir.IntType(32), name='i_v')
+            
             self.builder.store(zero, counter_ptr_v)
             self.builder.branch(loop_cond_v)
             self.builder.position_at_start(loop_cond_v)
+            
             i_v = self.builder.load(counter_ptr_v)
             cond_v = self.builder.icmp_signed('<', i_v, size_val)
+           
             self.builder.cbranch(cond_v, loop_body_v, loop_exit_v)
             self.builder.position_at_start(loop_body_v)
+           
             src_elem_ptr = self.builder.gep(elems_array_ptr, [zero, i_v], inbounds=True)
             elem_val = self.builder.load(src_elem_ptr)
             promoted_val = elem_val
+           
             if isinstance(elem_val.type, ir.IntType):
                 promoted_val = self.builder.sitofp(elem_val, double_type)
+           
             elif isinstance(elem_val.type, ir.FloatType):
                 promoted_val = self.builder.fpext(elem_val, double_type)
+           
             self.builder.store(promoted_val, self.builder.gep(data_ptr, [i_v], inbounds=True))
             next_i_v = self.builder.add(i_v, one)
+           
             self.builder.store(next_i_v, counter_ptr_v)
             self.builder.branch(loop_cond_v)
             self.builder.position_at_start(loop_exit_v)
+           
             return vec_ptr, ir.PointerType(vector_struct_type)
 
 
         if name == "dot":
             if len(params) != 2:
                 return self.report_error("dot() requires exactly 2 vector arguments.")
+            
             v1_res = self.resolve_value(params[0])
             v2_res = self.resolve_value(params[1])
-            if not v1_res or not v2_res: return None
+            
+            if not v1_res or not v2_res:
+                return None
+            
             v1_ptr, v1_type = v1_res
             v2_ptr, v2_type = v2_res
             if not (isinstance(v1_type, ir.PointerType) and v1_type.pointee == vector_struct_type and # type: ignore
                     isinstance(v2_type, ir.PointerType) and v2_type.pointee == vector_struct_type): # type: ignore
+                
                 return self.report_error("dot() arguments must be vectors.")
 
             size = self.builder.load(self.builder.gep(v1_ptr, [zero, one], inbounds=True))
@@ -2270,18 +2249,23 @@ class Compiler:
             loop_cond = self.builder.append_basic_block('dot_loop_cond')
             loop_body = self.builder.append_basic_block('dot_loop_body')
             loop_exit = self.builder.append_basic_block('dot_loop_exit')
+            
             counter = self.builder.alloca(ir.IntType(32), name='i_dot')
             self.builder.store(zero, counter)
             self.builder.branch(loop_cond)
             self.builder.position_at_start(loop_cond)
+            
             i = self.builder.load(counter)
             self.builder.cbranch(self.builder.icmp_signed('<', i, size), loop_body, loop_exit)
             self.builder.position_at_start(loop_body)
+            
             e1 = self.builder.load(self.builder.gep(v1_data, [i], inbounds=True))
             e2 = self.builder.load(self.builder.gep(v2_data, [i], inbounds=True))
+            
             product = self.builder.fmul(e1, e2)
             current_sum = self.builder.load(accumulator)
             new_sum = self.builder.fadd(current_sum, product)
+            
             self.builder.store(new_sum, accumulator)
             self.builder.store(self.builder.add(i, one), counter)
             self.builder.branch(loop_cond)
@@ -2349,10 +2333,14 @@ class Compiler:
         
         
         if name == "abs": 
-            if len(params) != 1: return self.report_error("abs() requires one argument.")
+            if len(params) != 1: 
+                return self.report_error("abs() requires one argument.")
             arg_res = self.resolve_value(params[0])
-            if not arg_res: return None
+            
+            if not arg_res: 
+                return None
             arg_val, arg_type = arg_res
+            
             if isinstance(arg_type, ir.PointerType) and arg_type.pointee == vector_struct_type: # type: ignore
                 vec_ptr = arg_val
                 size = self.builder.load(self.builder.gep(vec_ptr, [zero, one], inbounds=True))
@@ -2364,17 +2352,24 @@ class Compiler:
                 loop_cond = self.builder.append_basic_block('abs_loop_cond')
                 loop_body = self.builder.append_basic_block('abs_loop_body')
                 loop_exit = self.builder.append_basic_block('abs_loop_exit')
+                
+                
                 counter = self.builder.alloca(ir.IntType(32), name='i_abs')
+                
                 self.builder.store(zero, counter)
                 self.builder.branch(loop_cond)
                 self.builder.position_at_start(loop_cond)
+                
                 i = self.builder.load(counter)
                 self.builder.cbranch(self.builder.icmp_signed('<', i, size), loop_body, loop_exit)
                 self.builder.position_at_start(loop_body)
+                
                 elem = self.builder.load(self.builder.gep(vec_data, [i], inbounds=True))
                 elem_sq = self.builder.fmul(elem, elem)
+                
                 current_sum = self.builder.load(sum_sq)
                 new_sum = self.builder.fadd(current_sum, elem_sq)
+                
                 self.builder.store(new_sum, sum_sq)
                 self.builder.store(self.builder.add(i, one), counter)
                 self.builder.branch(loop_cond)
@@ -2383,6 +2378,7 @@ class Compiler:
                 final_sum_sq = self.builder.load(sum_sq)
                 sqrt_func, _ = self.env.lookup('sqrt') # type: ignore
                 magnitude = self.builder.call(sqrt_func, [final_sum_sq])
+                
                 return magnitude, double_type
             
 
@@ -2432,6 +2428,7 @@ class Compiler:
 
             real_ptr = self.builder.gep(arg_val, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True)
             imag_ptr = self.builder.gep(arg_val, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 1)], inbounds=True)
+            
             real_val = self.builder.load(real_ptr)
             imag_val = self.builder.load(imag_ptr)
 
@@ -2445,6 +2442,7 @@ class Compiler:
             sqrt_func, _ = sqrt_func_res
             
             magnitude = self.builder.call(sqrt_func, [sum_sq], "magnitude")
+            
             return magnitude, ir.DoubleType()
         
 
@@ -3268,7 +3266,7 @@ class Compiler:
                 scanf_func, _ = scanf_func_result
                 return self.input_string(scanf_func)
 
-            case NodeType.CastExpression: # ADD THIS CASE
+            case NodeType.CastExpression: 
                 return self.visit_cast_expression(cast(CastExpression, node))
 
 
@@ -3295,11 +3293,10 @@ class Compiler:
         loaded_value = self.builder.load(float_ptr, name="input_float_val")
         return loaded_value, self.type_map['float']
 
-    # ADD THIS NEW VISITOR METHOD
+    
     def visit_cast_expression(self, node: CastExpression) -> Optional[tuple[ir.Value, ir.Type]]:
         target_type_str = node.target_type.value
 
-        # Special handling for casting the result of input()
         if node.expression.type() == NodeType.InputExpression:
             scanf_func_result = self.env.lookup("input")
             if scanf_func_result is None:
@@ -3317,7 +3314,6 @@ class Compiler:
                 self.report_error(f"Cannot read input directly as type '{target_type_str}'.")
                 return None
 
-        # General casting for other expressions
         val_res = self.resolve_value(node.expression)
         if val_res is None:
             self.report_error("Cannot resolve expression for casting.")
@@ -3331,7 +3327,6 @@ class Compiler:
             
         target_type = self.type_map[target_type_str]
 
-        # Type promotion/conversion logic
         if isinstance(original_type, ir.IntType) and isinstance(target_type, (ir.FloatType, ir.DoubleType)):
             cast_val = self.builder.sitofp(original_val, target_type)
             if cast_val is None:

@@ -768,8 +768,8 @@ class Parser:
             expr=self.parse_expression(PrecedenceType.P_LOWEST)
 
             if self.peek_token_is(TokenType.COLON):
-                self.next_token()  # move to ':'
-                self.next_token()  # move to type identifier
+                self.next_token()  
+                self.next_token()  
 
                 if self.current_token is None or not (
                     self.current_token.type in [TokenType.IDENTIFIER, TokenType.INT, TokenType.FLOAT, TokenType.STRING, TokenType.BOOL_TYPE]

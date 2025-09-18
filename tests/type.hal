@@ -1,10 +1,13 @@
 fun main()
-    print("integerr");
+    print("enter an integer");
     var x = input() : int;
-    print("float");
+    print("enter a decimal");
     var y = input() : float;
     print("Integer: ", x, " Float: ", y);
- 
-    
-    return 0;
+    var sum=x+y :int;
+    print("Result after casting to int: ",sum);
+    var s=x+y :float;
+    print("Result after casting to float: ",s);
+    var a=12+13.5;
+    return a;
 nuf
