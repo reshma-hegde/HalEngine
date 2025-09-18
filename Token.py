@@ -177,6 +177,8 @@ KEYWORDS: dict[str,TokenType]={
     "pause":TokenType.PAUSE,
     "raise":TokenType.RAISE,
     "as":TokenType.AS,
+    "int":TokenType.INT,
+    "float":TokenType.FLOAT,
     
     
 }

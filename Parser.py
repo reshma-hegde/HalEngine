@@ -5,11 +5,12 @@ from enum import Enum,auto
 
 from AST import RaiseStatement, Statement,Expression,Program,FunctionStatement,ReturnStatement,BlockStatement,AssignStatement,PostfixExpression,LoadStatement,ArrayLiteral,NullLiteral,StructInstanceExpression,ClassStatement,ThisExpression,ForkStatement,QubitResetStatement,PauseStatement
 from AST import ExpressionStatement, InfixExpression,IntegerLiteral,FloatLiteral,IdentifierLiteral,VarStatement, PrefixExpression, InputExpression,ArrayAccessExpression,StructStatement,StructAccessExpression,MemberStatement,BranchStatement,DoubleLiteral,SuperExpression,AsExpression
-from AST import BooleanLiteral,IfStatement,CallExpression,FunctionParameter,StringLiteral, WhileStatement,BreakStatement,ContinueStatement,ForStatement,ReserveCall,RefExpression,DerefExpression,RewindStatement, FastForwardStatement,MeasureExpression,QubitDeclarationStatement
+from AST import BooleanLiteral,IfStatement,CallExpression,FunctionParameter,StringLiteral, WhileStatement,BreakStatement,ContinueStatement,ForStatement,ReserveCall,RefExpression,DerefExpression,RewindStatement, FastForwardStatement,MeasureExpression,QubitDeclarationStatement,CastExpression
 
 
 class PrecedenceType(Enum):
     P_LOWEST=0
+    P_CAST=auto() 
     LOGICAL_AND=auto() 
     LOGICAL_OR=auto()
 
@@ -50,6 +51,7 @@ PRECEDENCES: dict[TokenType,PrecedenceType]={
     TokenType.AND:PrecedenceType.LOGICAL_AND, 
     TokenType.OR:PrecedenceType.LOGICAL_OR,
     TokenType.AS: PrecedenceType.P_AS,
+    TokenType.COLON: PrecedenceType.P_CAST,
     
     
 }
@@ -90,6 +92,7 @@ class Parser:
             TokenType.DOUBLE:self.parse_double_literal,
             TokenType.SUPER: self.parse_super_expression,
             TokenType.ARROW:self.parse_gt_ignore,
+            TokenType.COLON:self.parse_cast_expression
             
 
         } 
@@ -286,6 +289,22 @@ class Parser:
                     return None
                     
                 return ExpressionStatement(expr=expr)
+
+
+    def parse_cast_expression(self, left: Expression) -> Expression | None:
+        self.next_token()
+
+        if not self.current_token_is(TokenType.IDENTIFIER):
+            self.errors.append(f"Expected a type identifier after ':', but got {self.current_token.type if self.current_token else 'None'}")
+            return None
+        
+        if self.current_token is None or self.current_token.literal is None:
+            self.errors.append("Invalid type identifier for cast.")
+            return None
+            
+        target_type = IdentifierLiteral(value=self.current_token.literal)
+        
+        return CastExpression(expression=left, target_type=target_type)
 
 
     def parse_as_expression(self, left: Expression) -> Expression | None:
@@ -746,7 +765,23 @@ class Parser:
         if self.peek_token_is(TokenType.EQ):
             self.next_token()
             self.next_token()
-            stmt.value=self.parse_expression(PrecedenceType.P_LOWEST)
+            expr=self.parse_expression(PrecedenceType.P_LOWEST)
+
+            if self.peek_token_is(TokenType.COLON):
+                self.next_token()  # move to ':'
+                self.next_token()  # move to type identifier
+
+                if self.current_token is None or not (
+                    self.current_token.type in [TokenType.IDENTIFIER, TokenType.INT, TokenType.FLOAT, TokenType.STRING, TokenType.BOOL_TYPE]
+                ):
+                    raise SyntaxError(
+                        f"Expected type identifier after ':' at line {self.current_token.line_no if self.current_token else -1}"
+                    )
+
+                target_type = IdentifierLiteral(value=self.current_token.literal)
+                expr = CastExpression(expression=expr, target_type=target_type)
+
+            stmt.value = expr
         else:
             stmt.value=None
         if not self.peek_token_is(TokenType.SEMICOLON):
@@ -811,6 +846,17 @@ class Parser:
             raise SyntaxError("Expected '(' after function name")
 
         stmt.parameters = self.parse_function_parameters() 
+
+        stmt.return_type = None
+        if self.current_token_is(TokenType.COLON):
+            self.next_token()
+            if not self.current_token_is(TokenType.IDENTIFIER):
+                self.errors.append("Expected return type identifier after '->'")
+                return None
+            if self.current_token is None:
+                self.errors.append("Invalid return type")
+                return None
+            stmt.return_type = self.current_token.literal
 
     
         self.next_token()  

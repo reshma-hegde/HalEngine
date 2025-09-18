@@ -1,0 +1,10 @@
+fun main()
+    print("integerr");
+    var x = input() : int;
+    print("float");
+    var y = input() : float;
+    print("Integer: ", x, " Float: ", y);
+ 
+    
+    return 0;
+nuf

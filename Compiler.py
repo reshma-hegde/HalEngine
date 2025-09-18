@@ -5,7 +5,7 @@ from llvmlite import ir
 import os
 from AST import DoubleLiteral, Node,NodeType,Program, RaiseStatement,Statement,Expression, VarStatement,IdentifierLiteral,ReturnStatement,AssignStatement,CallExpression,InputExpression,NullLiteral, ClassStatement,ThisExpression,BranchStatement,ForkStatement,QubitDeclarationStatement,MeasureExpression
 from AST import ExpressionStatement,InfixExpression,IntegerLiteral,FloatLiteral, BlockStatement,FunctionStatement,IfStatement,BooleanLiteral,ArrayLiteral,RefExpression,DerefExpression,ReserveCall,RewindStatement, FastForwardStatement,SuperExpression,AsExpression
-from AST import FunctionParameter,StringLiteral,WhileStatement,BreakStatement,ContinueStatement,PrefixExpression,PostfixExpression,LoadStatement,ArrayAccessExpression, StructInstanceExpression,StructAccessExpression,StructStatement,QubitResetStatement
+from AST import FunctionParameter,StringLiteral,WhileStatement,BreakStatement,ContinueStatement,PrefixExpression,PostfixExpression,LoadStatement,ArrayAccessExpression, StructInstanceExpression,StructAccessExpression,StructStatement,QubitResetStatement,CastExpression
 from typing import List, cast
 from Environment import Environment
 from typing import Optional
@@ -3266,18 +3266,89 @@ class Compiler:
                     return None
                 
                 scanf_func, _ = scanf_func_result
-                if value_type == "int":
-                    return self.input_int(scanf_func)
-                if value_type == "string":
-                    return self.input_string(scanf_func)
                 return self.input_string(scanf_func)
-                
+
+            case NodeType.CastExpression: # ADD THIS CASE
+                return self.visit_cast_expression(cast(CastExpression, node))
+
+
             case NodeType.CallExpression:
                 if isinstance(node, CallExpression):
                     return self.visit_call_expression(node)
                 else:
                     self.report_error("Expected CallExpression node, got something else.")
                     return None
+
+    def input_float(self, scanf_func):
+        format_string = "%f\0"
+        c_fmt = ir.Constant(ir.ArrayType(ir.IntType(8), len(format_string)),
+                            bytearray(format_string.encode("utf8")))
+        global_fmt = ir.GlobalVariable(self.module, c_fmt.type,
+                                    name=f"__scanf_float_format_{self.increment_counter()}")
+        global_fmt.linkage = 'internal'
+        global_fmt.global_constant = True
+        global_fmt.initializer = c_fmt # type: ignore
+        fmt_ptr = self.builder.bitcast(global_fmt, ir.IntType(8).as_pointer())
+
+        float_ptr = self.builder.alloca(self.type_map['float'], name="input_float_ptr")
+        self.builder.call(scanf_func, [fmt_ptr, float_ptr])
+        loaded_value = self.builder.load(float_ptr, name="input_float_val")
+        return loaded_value, self.type_map['float']
+
+    # ADD THIS NEW VISITOR METHOD
+    def visit_cast_expression(self, node: CastExpression) -> Optional[tuple[ir.Value, ir.Type]]:
+        target_type_str = node.target_type.value
+
+        # Special handling for casting the result of input()
+        if node.expression.type() == NodeType.InputExpression:
+            scanf_func_result = self.env.lookup("input")
+            if scanf_func_result is None:
+                self.report_error("Built-in function 'scanf' not found.")
+                return None
+            scanf_func, _ = scanf_func_result
+
+            if target_type_str == "int":
+                return self.input_int(scanf_func)
+            elif target_type_str in ["float", "double"]:
+                return self.input_float(scanf_func) 
+            elif target_type_str == "str":
+                return self.input_string(scanf_func)
+            else:
+                self.report_error(f"Cannot read input directly as type '{target_type_str}'.")
+                return None
+
+        # General casting for other expressions
+        val_res = self.resolve_value(node.expression)
+        if val_res is None:
+            self.report_error("Cannot resolve expression for casting.")
+            return None
+        
+        original_val, original_type = val_res
+        
+        if target_type_str not in self.type_map:
+            self.report_error(f"Unknown type '{target_type_str}' for casting.")
+            return None
+            
+        target_type = self.type_map[target_type_str]
+
+        # Type promotion/conversion logic
+        if isinstance(original_type, ir.IntType) and isinstance(target_type, (ir.FloatType, ir.DoubleType)):
+            cast_val = self.builder.sitofp(original_val, target_type)
+            if cast_val is None:
+                return None
+            return cast_val, target_type
+            
+        if isinstance(original_type, (ir.FloatType, ir.DoubleType)) and isinstance(target_type, ir.IntType):
+            cast_val = self.builder.fptosi(original_val, target_type)
+            if cast_val is None:
+                return None
+            return cast_val, target_type
+        
+        if original_type == target_type:
+            return original_val, original_type
+
+        self.report_error(f"Unsupported cast from {original_type} to {target_type}.")
+        return None
 
 
     def input_int(self, scanf_func):
