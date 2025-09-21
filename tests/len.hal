@@ -1,8 +1,8 @@
 fun main()
     array nums = [10, 20, 30, 40,50,60,70,80];
     var num="hello";
-    var n=len(num)-1;
-    print( n);
-    print( len(nums));
+    var n=len(nums)-1;
+    print(n);
+    print(len(nums));
     return 0;
 nuf

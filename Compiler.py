@@ -495,17 +495,14 @@ class Compiler:
             return
 
         if isinstance(ir_type, ir.PointerType) and isinstance(
-            ir_type.pointee, ir.ArrayType # type: ignore
-        ):  # type: ignore
-            zero = ir.Constant(ir.IntType(32), 0)
-            elem_ptr = self.builder.gep(value_ir, [zero, zero], inbounds=True, name=f"{name}_elem_ptr")
-            slot = self.builder.alloca(elem_ptr.type, name=name)
-            self.builder.store(elem_ptr, slot)
+            ir_type.pointee, ir.ArrayType   # type: ignore
+        ):
+            
+            self.array_lengths[name] = ir_type.pointee.count # type: ignore
 
-            self.array_lengths[name] = ir_type.pointee.count  # type: ignore
-
-            self.env.define(name, slot, elem_ptr.type)
+            self.env.define(name, value_ir, ir_type)
             return
+            
 
         ptr = self.builder.alloca(ir_type, name=name)
         self.builder.store(value_ir, ptr)
@@ -517,6 +514,7 @@ class Compiler:
             self.history_vars[name] = (history_ptr, ir_type)
 
             self._emit_save_state()   
+
 
 
     def visit_block_statement(self,node:BlockStatement)->None:
@@ -612,6 +610,10 @@ class Compiler:
                             inferred_type = "float"
                         elif isinstance(inferred_ir_type, ir.PointerType):
                             inferred_type = "array"
+                            elem_type = self.type_map["int"]
+                            
+                            arr_type = ir.ArrayType(elem_type, 100) 
+                            param_types.append(ir.PointerType(arr_type))
                         break
             if inferred_type is None:
                 inferred_type = "void"
@@ -669,11 +671,16 @@ class Compiler:
 
         params_ptr = []
         for i, param_name in enumerate(param_names):
-            ptr = self.builder.alloca(param_types[i], name=param_name)
-            self.builder.store(func.args[i], ptr)
-            self.env.define(param_name, ptr, param_types[i])
+            if isinstance(param_types[i], ir.PointerType) and isinstance(param_types[i].pointee, ir.ArrayType): # type: ignore
+                
+                self.env.define(param_name, func.args[i], param_types[i])
+            else:
+                
+                ptr = self.builder.alloca(param_types[i], name=param_name)
+                self.builder.store(func.args[i], ptr)
+                self.env.define(param_name, ptr, param_types[i])
 
-        
+                
         
 
         self.compile(body)
@@ -2913,18 +2920,16 @@ class Compiler:
   
         self.builder = prev_builder
 
-
-   
     def _instantiate_and_compile_generic_function(
-        self, 
-        node: FunctionStatement, 
-        mangled_name: str, 
+        self,
+        node: FunctionStatement,
+        mangled_name: str,
         param_types: list[ir.Type]
     ) -> Optional[tuple[ir.Function, ir.Type]]:
-        
+
         if node.name is None or node.name.value is None or node.body is None:
             return None
-        
+
         name: str = node.name.value
         body: BlockStatement = node.body
         params: list[FunctionParameter] = node.parameters or []
@@ -2939,18 +2944,23 @@ class Compiler:
 
         caller_builder = self.builder
         caller_env = self.env
-        
-        
         self.builder = ir.IRBuilder(dummy_block)
-        
         self.env = Environment(parent=global_env)
 
-        for i, param_name in enumerate(param_names):
-            dummy_alloca = self.builder.alloca(param_types[i])
-            self.env.define(param_name, dummy_alloca, param_types[i])
-
-        self.compile(body)
         
+        for i, param_name in enumerate(param_names):
+            
+            if isinstance(param_types[i], ir.PointerType) and isinstance(param_types[i].pointee, ir.ArrayType): # type: ignore
+                
+                null_ptr_for_type_checking = ir.Constant(param_types[i], None)
+                self.env.define(param_name, null_ptr_for_type_checking, param_types[i])
+            else:
+                dummy_alloca = self.builder.alloca(param_types[i])
+                self.env.define(param_name, dummy_alloca, param_types[i])
+        
+        
+        self.compile(body)
+
         inferred_type = "void"
         if node.return_type:
             inferred_type = node.return_type
@@ -2966,9 +2976,9 @@ class Compiler:
                         elif isinstance(inferred_ir_type, ir.DoubleType): inferred_type = "double"
                         elif isinstance(inferred_ir_type, ir.PointerType): inferred_type = "array"
                         break
-        
+
         return_ir_type = self.type_map.get(inferred_type, ir.IntType(32).as_pointer() if inferred_type == "array" else ir.VoidType())
-        
+
         self.builder = caller_builder
         self.env = caller_env
 
@@ -2979,28 +2989,33 @@ class Compiler:
         caller_builder = self.builder
         caller_env = self.env
         was_in_main = self.is_in_main
-        
+
         self.is_in_main = False
         block = func.append_basic_block(f'{mangled_name}_entry')
         self.builder = ir.IRBuilder(block)
         self.env = Environment(parent=global_env, name=mangled_name)
-        
+
         for i, param_name in enumerate(param_names):
-            ptr = self.builder.alloca(param_types[i], name=param_name)
-            self.builder.store(func.args[i], ptr)
-            self.env.define(param_name, ptr, param_types[i])
-        
+            if isinstance(param_types[i], ir.PointerType) and isinstance(param_types[i].pointee, ir.ArrayType): # type: ignore
+                self.env.define(param_name, func.args[i], param_types[i])
+            else:
+                ptr = self.builder.alloca(param_types[i], name=param_name)
+                self.builder.store(func.args[i], ptr)
+                self.env.define(param_name, ptr, param_types[i])
+
         self.compile(body)
-        
+
         if self.builder.block is not None and not self.builder.block.is_terminated:
             if inferred_type == "void":
                 self.builder.ret_void()
 
+        
         self.builder = caller_builder
         self.env = caller_env
         self.is_in_main = was_in_main
 
         return func, return_ir_type
+    
     
     def visit_reserve_call(self, node: ReserveCall) -> tuple[ir.Value, ir.Type] | None:
         size_result = self.resolve_value(node.size_expr)
@@ -3181,19 +3196,10 @@ class Compiler:
                 ptr, typ = result
 
              
-                if isinstance(typ, ir.PointerType) and isinstance(typ.pointee, ir.ArrayType):  # type: ignore 
-                    zero = ir.Constant(ir.IntType(32), 0)
-                    if isinstance(type(ptr), ir.PointerType) and isinstance(type(ptr).pointee, ir.PointerType):  # type: ignore 
-                        loaded_array_ptr = self.builder.load(ptr, name=f"{ident_node.value}_arrptr_load")
-                        elem_ptr = self.builder.gep(loaded_array_ptr, [zero, zero], inbounds=True, name=f"{ident_node.value}_elem_ptr")
-                        return elem_ptr, elem_ptr.type
-                    else:
-                        elem_ptr = self.builder.gep(ptr, [zero, zero], inbounds=True, name=f"{ident_node.value}_elem_ptr")
-                        return elem_ptr, elem_ptr.type
-
-                
-                if isinstance(typ, ir.PointerType) and isinstance(typ.pointee, ir.IdentifiedStructType): # type: ignore
-            
+                if isinstance(typ, ir.PointerType) and (
+                    isinstance(typ.pointee, ir.ArrayType) or # type: ignore
+                    isinstance(typ.pointee, ir.IdentifiedStructType) # type: ignore
+                ):
                     return ptr, typ
 
                 loaded = self.builder.load(ptr, name=f"{ident_node.value}_load")
@@ -3208,8 +3214,11 @@ class Compiler:
                 if str_node.value is None:
                     self.report_error("String literal has no value.")
                     return None
-                string,Type=self.convert_string(str_node.value)
-                return string,Type
+                string_global, _ = self.convert_string(str_node.value)
+                string_ptr = self.builder.gep(string_global, 
+                                              [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], 
+                                              inbounds=True)
+                return string_ptr, ir.IntType(8).as_pointer()
 
             case NodeType.InfixExpression:
                 result = self.visit_infix_expression(cast(InfixExpression, node))
@@ -3401,16 +3410,44 @@ class Compiler:
             element_values.append(val)
             element_types.append(typ)
 
-        base_type = element_types[0]
-        if not all(t == base_type for t in element_types):
-            self.report_error("All array elements must have the same type.")
-            return None
+        target_type = element_types[0]
+        is_numeric = all(isinstance(t, (ir.IntType, ir.FloatType, ir.DoubleType)) for t in element_types)
+        
+        if is_numeric:
+            if any(isinstance(t, ir.DoubleType) for t in element_types):
+                target_type = ir.DoubleType()
+            elif any(isinstance(t, ir.FloatType) for t in element_types):
+                target_type = ir.FloatType()
+            else:
+                target_type = ir.IntType(32)
+        else:
+            
+            if not all(t == target_type for t in element_types):
+                self.report_error("All array elements must have the same type for non-numeric arrays.")
+                return None
 
-        array_len = len(element_values)
-        array_type = ir.ArrayType(base_type, array_len)
+        
+        promoted_values = []
+        for i, val in enumerate(element_values):
+            current_type = element_types[i]
+            if current_type == target_type:
+                promoted_values.append(val)
+            elif is_numeric:
+                if isinstance(current_type, ir.IntType):
+                    promoted_val = self.builder.sitofp(val, target_type)
+                    promoted_values.append(promoted_val)
+                elif isinstance(current_type, ir.FloatType) and isinstance(target_type, ir.DoubleType):
+                    promoted_val = self.builder.fpext(val, target_type)
+                    promoted_values.append(promoted_val)
+            else:
+                self.report_error(f"Cannot mix types in array: found {current_type} and expected {target_type}")
+                return None
+
+        array_len = len(promoted_values)
+        array_type = ir.ArrayType(target_type, array_len)
         array_ptr = self.builder.alloca(array_type, name="array")
 
-        for idx, val in enumerate(element_values):
+        for idx, val in enumerate(promoted_values):
             element_ptr = self.builder.gep(
                 array_ptr,
                 [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), idx)],
@@ -3418,9 +3455,9 @@ class Compiler:
             )
             self.builder.store(val, element_ptr)
 
-        return array_ptr, array_ptr.type
+        return array_ptr, ir.PointerType(array_type)
 
-    
+
     def visit_array_index_expression(self, node: ArrayAccessExpression) -> tuple[ir.Value, ir.Type] | None:
         array_result = self.resolve_value(node.array)
         if array_result is None:
