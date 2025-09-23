@@ -22,7 +22,11 @@ fun main()
     var c=2394.39d;
     var d="hello";
     array e=[1,2,3,4];
-
+    print(a);
+    print(b);
+    print(c);
+    print(d);
+    print(e);
  
     
     show_data(a,b,c,d,e);

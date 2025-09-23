@@ -2620,6 +2620,74 @@ class Compiler:
                 
                 val, val_type = result
 
+                if isinstance(val_type, ir.PointerType) and isinstance(val_type.pointee, ir.ArrayType): # type: ignore
+                    array_ptr = val
+                    array_ir_type = val_type.pointee # type: ignore
+                    element_type = array_ir_type.element
+                    array_len = array_ir_type.count
+
+                    open_bracket_fmt, _ = self.convert_string("[")
+                    open_bracket_ptr = self.builder.gep(open_bracket_fmt, [zero, zero], inbounds=True)
+                    self.builder.call(printf_func, [open_bracket_ptr])
+
+                    loop_entry = self.builder.append_basic_block("array_print_entry")
+                    loop_body = self.builder.append_basic_block("array_print_body")
+                    loop_exit = self.builder.append_basic_block("array_print_exit")
+
+                    counter_ptr = self.builder.alloca(ir.IntType(32), name='i_array_print')
+                    self.builder.store(ir.Constant(ir.IntType(32), 0), counter_ptr)
+                    self.builder.branch(loop_entry)
+
+                    self.builder.position_at_start(loop_entry)
+                    i = self.builder.load(counter_ptr)
+                    cond = self.builder.icmp_signed('<', i, ir.Constant(ir.IntType(32), array_len))
+                    self.builder.cbranch(cond, loop_body, loop_exit)
+
+                    self.builder.position_at_start(loop_body)
+
+                    is_not_first = self.builder.icmp_signed('!=', i, ir.Constant(ir.IntType(32), 0))
+                    with self.builder.if_then(is_not_first):
+                        separator_fmt, _ = self.convert_string(", ")
+                        separator_ptr = self.builder.gep(separator_fmt, [zero, zero], inbounds=True)
+                        self.builder.call(printf_func, [separator_ptr])
+
+                    element_ptr_gep = self.builder.gep(array_ptr, [zero, i], inbounds=True)
+                    element_val = self.builder.load(element_ptr_gep)
+
+                    elem_format_str = ""
+                    arg_to_pass = element_val
+                    
+                    if isinstance(element_type, ir.IntType) and element_type.width == 32:
+                        elem_format_str = "%d"
+                    elif isinstance(element_type, ir.DoubleType):
+                        elem_format_str = "%f"
+                    elif isinstance(element_type, ir.FloatType):
+                        elem_format_str = "%f"
+                        arg_to_pass = self.builder.fpext(element_val, ir.DoubleType())
+                    elif isinstance(element_type, ir.IntType) and element_type.width == 1:
+                        elem_format_str = "%s"
+                        true_ptr = self.builder.gep(self.true_str, [zero, zero], inbounds=True)
+                        false_ptr = self.builder.gep(self.false_str, [zero, zero], inbounds=True)
+                        arg_to_pass = self.builder.select(element_val, true_ptr, false_ptr)
+                    elif isinstance(element_type, ir.PointerType) and isinstance(element_type.pointee, ir.IntType) and element_type.pointee.width == 8: # type: ignore
+                        elem_format_str = "%s"
+
+                    if elem_format_str:
+                        fmt_g, _ = self.convert_string(elem_format_str)
+                        fmt_p = self.builder.gep(fmt_g, [zero, zero], inbounds=True)
+                        self.builder.call(printf_func, [fmt_p, arg_to_pass])
+                    else:
+                        self.report_error(f"Printing array with element type {element_type} is not supported.")
+                    
+                    next_i = self.builder.add(i, ir.Constant(ir.IntType(32), 1))
+                    self.builder.store(next_i, counter_ptr)
+                    self.builder.branch(loop_entry)
+
+                    self.builder.position_at_start(loop_exit)
+                    close_bracket_fmt, _ = self.convert_string("]")
+                    close_bracket_ptr = self.builder.gep(close_bracket_fmt, [zero, zero], inbounds=True)
+                    self.builder.call(printf_func, [close_bracket_ptr])
+                    continue
                 
                 is_vec = isinstance(val_type, ir.PointerType) and val_type.pointee == vector_struct_type # type: ignore
                 if is_vec:

@@ -12,5 +12,6 @@ fun main()
     array a = [1, 2, 3, 4, 5];
     var b=5;
     var result = adds(a, b);
+    print(a);
     return result;
 nuf

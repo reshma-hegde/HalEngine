@@ -8,5 +8,6 @@ fun main()
     var q = a[0] + a[1] + a[2];
     print("Third element:",a[2]);
     print("addition of a first three elements:",q);
+    print(a);
     return b;
 nuf

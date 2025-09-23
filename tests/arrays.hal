@@ -3,6 +3,9 @@ fun main()
     array words  = ["hi", "hello", "test"];
     array integers = [1, 2, 3, 4, 5];
     array word  = ["h", "k", "t"];
+    print(floats);
+    print(words);
+    print(integers);
     print(integers[2]);
     print(floats[0]);
     print(words[1]);
