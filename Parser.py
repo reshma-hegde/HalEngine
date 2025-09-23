@@ -919,19 +919,17 @@ class Parser:
         while (
             self.current_token is not None and
             self.current_token.type not in end_tokens and
-            self.current_token.type != TokenType.NUF and
-            
             self.current_token.type != TokenType.EOF
         ):
             stmt = self.parse_statement()
             if stmt is not None:
                 block_stmt.statements.append(stmt)
+            
+            # This call ensures the parser always moves to the next token,
+            # preventing an infinite loop if parse_statement() returns None.
+            self.next_token()
         
-            self.next_token()  
-
-    
         return block_stmt
-
 
     def parse_assignment_statement(self, left_expr: Expression | None = None) -> AssignStatement|None:
         if self.current_token is None and left_expr is None:
@@ -1011,16 +1009,17 @@ class Parser:
             self.errors.append("Expected condition after 'while'")
             return None
 
-        body_statements: list[Statement] = []
+        self.next_token()
 
-        while not self.current_token_is(TokenType.ELIHW) and not self.current_token_is(TokenType.EOF):
-            stmt = self.parse_statement()
-            if stmt is not None:
-                body_statements.append(stmt)
-            self.next_token()
+        # Use the corrected block parsing utility for the loop body.
+        body = self.parse_block_statement_until([TokenType.ELIHW])
 
-        return WhileStatement(condition=condition, body=BlockStatement(body_statements))
-
+        if not self.current_token_is(TokenType.ELIHW):
+            actual = self.current_token.type if self.current_token else "None"
+            self.errors.append(f"Expected 'elihw' to close while loop, but got {actual}.")
+            return None
+        
+        return WhileStatement(condition=condition, body=body)
 
     def parse_break_statement(self)->BreakStatement:
         self.next_token()
