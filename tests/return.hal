@@ -1,0 +1,44 @@
+fun getInt()
+    return 42;
+nuf
+
+fun getFloat()
+    return 3.14;
+nuf
+
+fun getDouble()
+    return 2.718281828d;
+nuf
+
+fun getBoolean()
+    return 1;   
+nuf
+
+fun getString()
+    var a="hello world";
+    return a;
+nuf
+
+fun getArray()
+    array b=["a","b","c","d","e"];
+    return b;
+nuf
+
+fun main()
+    var x = getInt();
+    var y = getFloat();
+    var z = getDouble();
+    var b= getBoolean();
+    
+    var s= getString();
+    array arr = getArray();
+
+    
+    print(x);
+    print(y);
+    print(z);
+    print(b);
+    print(s);
+    print(arr);
+    return 0;
+nuf

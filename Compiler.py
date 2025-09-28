@@ -539,6 +539,14 @@ class Compiler:
             raise ValueError("Failed to resolve return expression")
 
         value, typ = resolved
+
+        current_function = self.builder.function
+        expected_return_type = current_function.return_value.type
+
+        if typ != expected_return_type:
+            if isinstance(typ, ir.PointerType) and isinstance(expected_return_type, ir.PointerType):
+                value = self.builder.bitcast(value, expected_return_type, name="return_cast")
+            
         self.builder.ret(value)
 
 
@@ -595,6 +603,7 @@ class Compiler:
         self.compile(body)
         
         
+        actual_inferred_ir_type: ir.Type | None = None
         if node.return_type is None:
             inferred_type: str | None = None
             for stmt in body.statements:
@@ -602,19 +611,23 @@ class Compiler:
                     result = self.resolve_value(stmt.return_value)
                     if result is not None:
                         _, inferred_ir_type = result
+                        
+                        actual_inferred_ir_type = inferred_ir_type
                         if isinstance(inferred_ir_type, ir.IntType) and inferred_ir_type.width == 1:
                             inferred_type = "bool"
                         elif isinstance(inferred_ir_type, ir.IntType):
                             inferred_type = "int"
                         elif isinstance(inferred_ir_type, ir.FloatType):
                             inferred_type = "float"
+                        elif isinstance(inferred_ir_type, ir.DoubleType):
+                            inferred_type = "double"
                         elif isinstance(inferred_ir_type, ir.PointerType):
-                            inferred_type = "array"
-                            elem_type = self.type_map["int"]
-                            
-                            arr_type = ir.ArrayType(elem_type, 100) 
-                            param_types.append(ir.PointerType(arr_type))
-                        break
+                            if isinstance(inferred_ir_type.pointee, ir.IntType) and inferred_ir_type.pointee.width == 8: # type: ignore
+                                inferred_type = "str"
+                            else:
+                                inferred_type = "array"
+                            break
+
             if inferred_type is None:
                 inferred_type = "void"
             ret_type_str = inferred_type
@@ -629,12 +642,14 @@ class Compiler:
 
         if ret_type_str not in self.type_map:
             if ret_type_str == "array":
-                return_ir_type = ir.IntType(32).as_pointer()
+                if actual_inferred_ir_type is not None:
+                    return_ir_type = actual_inferred_ir_type
+                else:
+                    return_ir_type = ir.IntType(32).as_pointer()
             else:
                 raise ValueError(f"Unknown return type: {ret_type_str}")
         else:
             return_ir_type = self.type_map[ret_type_str]
-
     
 
         func = ir.Function(self.module, ir.FunctionType(return_ir_type, param_types), name=name)
@@ -3489,12 +3504,10 @@ class Compiler:
             else:
                 target_type = ir.IntType(32)
         else:
-            
             if not all(t == target_type for t in element_types):
                 self.report_error("All array elements must have the same type for non-numeric arrays.")
                 return None
 
-        
         promoted_values = []
         for i, val in enumerate(element_values):
             current_type = element_types[i]
@@ -3510,10 +3523,31 @@ class Compiler:
             else:
                 self.report_error(f"Cannot mix types in array: found {current_type} and expected {target_type}")
                 return None
-
+        
         array_len = len(promoted_values)
         array_type = ir.ArrayType(target_type, array_len)
-        array_ptr = self.builder.alloca(array_type, name="array")
+
+        element_size_in_bytes = 4 
+        if isinstance(target_type, ir.DoubleType):
+            element_size_in_bytes = 8
+        elif isinstance(target_type, ir.IntType):
+            element_size_in_bytes = target_type.width // 8
+        
+        total_size = self.builder.mul(
+            ir.Constant(ir.IntType(32), element_size_in_bytes),
+            ir.Constant(ir.IntType(32), array_len),
+            name="array_size_bytes"
+        )
+        
+        malloc_func_result = self.env.lookup("reserve")
+        if malloc_func_result is None:
+            self.report_error("Built-in function 'reserve' (malloc) not found.")
+            return None
+        malloc_func, _ = malloc_func_result
+        raw_ptr = self.builder.call(malloc_func, [total_size], name="raw_heap_ptr")
+
+        array_ptr = self.builder.bitcast(raw_ptr, ir.PointerType(array_type), name="typed_heap_ptr")
+
 
         for idx, val in enumerate(promoted_values):
             element_ptr = self.builder.gep(
@@ -3522,9 +3556,10 @@ class Compiler:
                 inbounds=True
             )
             self.builder.store(val, element_ptr)
-
+        if array_ptr is None:
+            return None
         return array_ptr, ir.PointerType(array_type)
-
+    
 
     def visit_array_index_expression(self, node: ArrayAccessExpression) -> tuple[ir.Value, ir.Type] | None:
         array_result = self.resolve_value(node.array)
