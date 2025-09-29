@@ -33,6 +33,7 @@ class Compiler:
             'void':ir.VoidType(),
             'bool':ir.IntType(1),
             'str':ir.PointerType(ir.IntType(8)),
+            'file': ir.PointerType(ir.IntType(8)),
             'null': ir.VoidType(),
             'qubit':ir.IntType(32)
         }
@@ -88,6 +89,42 @@ class Compiler:
         
 
     def __initialize_builtins(self)->None:
+
+        def __init_fopen()->ir.Function:
+            
+            fnty:ir.FunctionType=ir.FunctionType(
+                self.type_map['file'],
+                [ir.IntType(8).as_pointer(), ir.IntType(8).as_pointer()],
+                var_arg=False
+            )
+            return ir.Function(self.module,fnty,'fopen')
+
+        def __init_fclose()->ir.Function:
+            
+            fnty:ir.FunctionType=ir.FunctionType(
+                self.type_map['int'],
+                [self.type_map['file']],
+                var_arg=False
+            )
+            return ir.Function(self.module,fnty,'fclose')
+
+        def __init_fputs()->ir.Function:
+            
+            fnty:ir.FunctionType=ir.FunctionType(
+                self.type_map['int'],
+                [ir.IntType(8).as_pointer(), self.type_map['file']],
+                var_arg=False
+            )
+            return ir.Function(self.module,fnty,'fputs')
+
+        def __init_fgets()->ir.Function:
+            
+            fnty:ir.FunctionType=ir.FunctionType(
+                ir.IntType(8).as_pointer(),
+                [ir.IntType(8).as_pointer(), self.type_map['int'], self.type_map['file']],
+                var_arg=False
+            )
+            return ir.Function(self.module, fnty, 'fgets')
         
         def __init_print()->ir.Function:
             fnty:ir.FunctionType=ir.FunctionType(
@@ -186,8 +223,11 @@ class Compiler:
         self.builtin_functions = {}
         self.builtin_functions["len"] = __builtin_len
 
-
-        
+        self.env.define('open', __init_fopen(), self.type_map['file'])
+        self.env.define('close', __init_fclose(), self.type_map['int'])
+        self.env.define('write', __init_fputs(), self.type_map['int'])
+        self.env.define('read_line', __init_fgets(), ir.IntType(8).as_pointer())
+                
         #print
         self.env.define('print',__init_print(),ir.IntType(32))
         self.env.define('input',__init_scanf(),ir.IntType(32))
@@ -1572,6 +1612,17 @@ class Compiler:
                 if node.operator == "!=":
                     self.builder.not_(cmp_val, name="null_cmp_neq")
                 return cmp_val, ir.IntType(1)
+            if isinstance(left_type, ir.PointerType) and isinstance(right_type, ir.IntType):
+                
+                null_ptr_equivalent = self.builder.inttoptr(right_value, left_type)
+                value = self.builder.icmp_unsigned(node.operator, left_value, null_ptr_equivalent)
+                return value, ir.IntType(1)
+
+            if isinstance(right_type, ir.PointerType) and isinstance(left_type, ir.IntType):
+                
+                null_ptr_equivalent = self.builder.inttoptr(left_value, right_type)
+                value = self.builder.icmp_unsigned(node.operator, right_value, null_ptr_equivalent)
+                return value, ir.IntType(1)
 
 
         
@@ -2070,6 +2121,35 @@ class Compiler:
 
     def visit_call_expression(self, node: CallExpression) -> tuple[ir.Value, ir.Type] | None:
         params: list[Expression] = node.arguments if node.arguments is not None else []
+        if isinstance(node.function, IdentifierLiteral) and node.function.value == "read_line":
+            if node.arguments is None or len(node.arguments) != 1:
+                return self.report_error("read_line() requires exactly one argument (a file pointer).")
+
+            arg_resolved = self.resolve_value(node.arguments[0])
+            if arg_resolved is None:
+                return self.report_error("Could not resolve file pointer for read_line().")
+
+            file_ptr, _ = arg_resolved
+            fgets_func_res = self.env.lookup("read_line") 
+            if fgets_func_res is None:
+                return self.report_error("Internal error: C function 'fgets' not found.")
+
+            fgets_func, ret_type = fgets_func_res
+
+            
+            buffer_size = 2048 
+            buffer_type = ir.ArrayType(ir.IntType(8), buffer_size)
+            buffer_alloca = self.builder.alloca(buffer_type, name="readline_buf")
+            buffer_ptr = self.builder.gep(buffer_alloca,
+                                        [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)],
+                                        inbounds=True, name="readline_buf_ptr")
+
+            size_arg = ir.Constant(ir.IntType(32), buffer_size)
+
+            self.builder.call(fgets_func, [buffer_ptr, size_arg, file_ptr])
+
+            
+            return buffer_ptr, ret_type
         if isinstance(node.function, StructAccessExpression):
             access_node = cast(StructAccessExpression, node.function)
             method_name = access_node.member_name.value
@@ -2846,6 +2926,14 @@ class Compiler:
             return None
         assert result is not None  
         func, ret_type = result
+
+        if name == "write":
+            
+            params = [params[1], params[0]] 
+
+     
+        func = cast(ir.Function, func)
+        expected_arg_types: list[ir.Type] = list(func.function_type.args)
 
      
         func = cast(ir.Function, func)

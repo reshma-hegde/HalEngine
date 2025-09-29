@@ -103,6 +103,7 @@ class TokenType(Enum):
     PAUSE="PAUSE"
     RAISE="RAISE"
     AS="AS"
+    FILE="FILE"
     
 
     
@@ -179,6 +180,7 @@ KEYWORDS: dict[str,TokenType]={
     "as":TokenType.AS,
     "int":TokenType.INT,
     "float":TokenType.FLOAT,
+    #"file":TokenType.FILE,
     
     
 }

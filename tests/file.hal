@@ -1,0 +1,27 @@
+fun main()
+    
+    file file_ptr = open("example.txt", "w");
+    if file_ptr == 0
+        print("Failed to open file for writing");
+        return 0;
+    fi
+
+    write(file_ptr, "Hello from Hal!\n");
+
+    close(file_ptr);
+
+    file_ptr = open("example.txt", "r");
+    if file_ptr == 0
+        print("Failed to open file for reading");
+        return -1;
+    fi
+
+   
+    var buffer = read_line(file_ptr);
+    print("File content:", buffer);
+
+    close(file_ptr);
+
+    return 0;
+nuf
+

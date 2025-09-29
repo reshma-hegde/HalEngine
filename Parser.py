@@ -225,6 +225,9 @@ class Parser:
         if self.current_token.type==TokenType.IDENTIFIER and self.peek_token_is_assignment():
             return self.parse_assignment_statement()
         
+        if self.current_token_is(TokenType.IDENTIFIER) and self.peek_token_is(TokenType.IDENTIFIER):
+            return self.parse_typed_var_statement()
+        
         if self.current_token.type in {
             TokenType.SEMICOLON, TokenType.FI, TokenType.ESLE,
             TokenType.ELSE, TokenType.NUF, TokenType.ELIHW, TokenType.SSALC
@@ -289,6 +292,34 @@ class Parser:
                     return None
                     
                 return ExpressionStatement(expr=expr)
+
+    # ADD this new method to the Parser class
+    def parse_typed_var_statement(self) -> VarStatement | None:
+        stmt = VarStatement()
+        if self.current_token is None or self.current_token.literal is None:
+            self.errors.append("Invalid type in variable declaration.")
+            return None
+        # The first token is the type literal (e.g., "file")
+        stmt.value_type = self.current_token.literal
+
+        self.next_token() # Move to the identifier
+
+        if self.current_token is None or self.current_token.literal is None:
+            self.errors.append("Invalid name in variable declaration.")
+            return None
+        stmt.name = IdentifierLiteral(value=self.current_token.literal)
+
+        if not self.expect_peek(TokenType.EQ):
+            self.errors.append(f"Expected '=' in declaration of '{stmt.name.value}'")
+            return None
+
+        self.next_token() # Move to the expression
+        stmt.value = self.parse_expression(PrecedenceType.P_LOWEST)
+
+        # Declarations should end with a semicolon
+        if self.peek_token_is(TokenType.SEMICOLON):
+            self.next_token()
+        return stmt
 
 
     def parse_cast_expression(self, left: Expression) -> Expression | None:

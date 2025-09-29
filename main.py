@@ -10,6 +10,10 @@ from llvmlite import ir
 import llvmlite.binding as llvm
 from ctypes import CFUNCTYPE, c_int, c_float
 
+#llc -filetype=obj debug/ir.ll -o out.o
+#gcc out.o -o out.exe
+#./out.exe
+
 
 
 LEXER_DEBUG: bool = False
@@ -56,7 +60,7 @@ if __name__ == '__main__':
 
         llvm_module: ir.Module = c.module
 
-        llvm_module.triple = llvm.get_default_triple()
+        llvm_module.triple = "x86_64-w64-windows-gnu"
 
         if COMPILER_DEBUG:
             with open("debug/ir.ll", "w") as f:
