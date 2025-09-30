@@ -1,0 +1,20 @@
+
+fun fib(var n)
+    if n == 0
+        return 0;
+    fi
+
+    if n == 1
+        return 1;
+    fi
+
+    return fib(n - 1) + fib(n - 2);
+nuf
+
+fun main()
+    print("enter a number to find a fibonnaci of");
+    var n = input() :int;
+    var result = fib(n);
+    print("fib(", n, ") = ", result);
+    return 0;
+nuf

@@ -576,7 +576,9 @@ class Compiler:
         resolved = self.resolve_value(expr)
 
         if resolved is None:
-            raise ValueError("Failed to resolve return expression")
+            # **FIX:** Don't raise an error. This allows the dummy pass to
+            # survive recursive calls and infer the type from the base case.
+            return
 
         value, typ = resolved
 
@@ -589,6 +591,41 @@ class Compiler:
             
         self.builder.ret(value)
 
+    def _find_and_infer_return_type(self, node: Node) -> Optional[ir.Type]:
+        """
+        Recursively traverses an AST node to find the first resolvable
+        return statement and returns its IR type. This is crucial for
+        correctly inferring return types from functions with branches.
+        """
+        if isinstance(node, BlockStatement):
+            for stmt in node.statements:
+                result = self._find_and_infer_return_type(stmt)
+                if result:
+                    return result
+        elif isinstance(node, IfStatement):
+            if node.consequence:
+                result = self._find_and_infer_return_type(node.consequence)
+                if result:
+                    return result
+            if node.el_if:
+                result = self._find_and_infer_return_type(node.el_if)
+                if result:
+                    return result
+            if node.alternative:
+                result = self._find_and_infer_return_type(node.alternative)
+                if result:
+                    return result
+        elif isinstance(node, ReturnStatement) and node.return_value is not None:
+            # We attempt to resolve the value. If it succeeds (e.g., it's a literal
+            # or a simple expression), we use its type. If it fails (e.g., a
+            # recursive call we don't know the type of yet), it returns None,
+            # and we continue searching.
+            resolved = self.resolve_value(node.return_value)
+            if resolved:
+                _, ir_type = resolved
+                return ir_type
+        # This can be extended for WhileStatement, etc., if they can contain returns.
+        return None
 
     def visit_function_statement(self, node: FunctionStatement) -> None:
         if node.name is None or node.name.value is None:
@@ -612,28 +649,20 @@ class Compiler:
                 param_types.append(self.type_map[param.value_type])
                 
             elif param.value_type == "array":
-    
                 param_types.append(ir.IntType(32).as_pointer())
             else:
                 param_types.append(ir.IntType(32))  
-                
 
+        # --- DUMMY PASS FOR TYPE INFERENCE ---
         global_env=self._get_global_env()
         previous_builder = self.builder
         previous_env = self.env
-        func_type = ir.FunctionType(ir.VoidType(), param_types)
         dummy_module = ir.Module(name=f"{name}_dummy_module")
-        dummy_func = ir.Function(dummy_module, func_type, name=f"{name}_dummy_temp")
+        dummy_func = ir.Function(dummy_module, ir.FunctionType(ir.VoidType(), param_types), name=f"{name}_dummy_temp")
         dummy_block = dummy_func.append_basic_block("entry")
-
-
-        previous_module = self.module
         
-
-        self.module = dummy_module
         self.builder = ir.IRBuilder(dummy_block)
         self.env = Environment(parent=global_env)
-        
         self.env.define(name, dummy_func, ir.VoidType()) 
         
         for i, param_name in enumerate(param_names):
@@ -642,59 +671,38 @@ class Compiler:
 
         self.compile(body)
         
+        # **FIX:** Use the new recursive helper to find the return type.
+        actual_inferred_ir_type = self._find_and_infer_return_type(body)
         
-        actual_inferred_ir_type: ir.Type | None = None
         if node.return_type is None:
             inferred_type: str | None = None
-            for stmt in body.statements:
-                if isinstance(stmt, ReturnStatement) and stmt.return_value is not None:
-                    result = self.resolve_value(stmt.return_value)
-                    if result is not None:
-                        _, inferred_ir_type = result
-                        
-                        actual_inferred_ir_type = inferred_ir_type
-                        if isinstance(inferred_ir_type, ir.IntType) and inferred_ir_type.width == 1:
-                            inferred_type = "bool"
-                        elif isinstance(inferred_ir_type, ir.IntType):
-                            inferred_type = "int"
-                        elif isinstance(inferred_ir_type, ir.FloatType):
-                            inferred_type = "float"
-                        elif isinstance(inferred_ir_type, ir.DoubleType):
-                            inferred_type = "double"
-                        elif isinstance(inferred_ir_type, ir.PointerType):
-                            if isinstance(inferred_ir_type.pointee, ir.IntType) and inferred_ir_type.pointee.width == 8: # type: ignore
-                                inferred_type = "str"
-                            else:
-                                inferred_type = "array"
-                            break
-
-            if inferred_type is None:
-                inferred_type = "void"
-            ret_type_str = inferred_type
+            if actual_inferred_ir_type:
+                if isinstance(actual_inferred_ir_type, ir.IntType) and actual_inferred_ir_type.width == 1: inferred_type = "bool"
+                elif isinstance(actual_inferred_ir_type, ir.IntType): inferred_type = "int"
+                elif isinstance(actual_inferred_ir_type, ir.FloatType): inferred_type = "float"
+                elif isinstance(actual_inferred_ir_type, ir.DoubleType): inferred_type = "double"
+                elif isinstance(actual_inferred_ir_type, ir.PointerType):
+                    pointee = actual_inferred_ir_type.pointee# type: ignore
+                    if isinstance(pointee, ir.IntType) and pointee.width == 8:
+                        inferred_type = "str"
+                    else:
+                        inferred_type = "array"
             
+            ret_type_str = inferred_type if inferred_type is not None else "void"
         else:
             ret_type_str = node.return_type
 
-        node.return_type=ret_type_str
-        self.module = previous_module
+        node.return_type = ret_type_str
         self.builder = previous_builder
         self.env = previous_env
 
-        if ret_type_str not in self.type_map:
-            if ret_type_str == "array":
-                if actual_inferred_ir_type is not None:
-                    return_ir_type = actual_inferred_ir_type
-                else:
-                    return_ir_type = ir.IntType(32).as_pointer()
-            else:
-                raise ValueError(f"Unknown return type: {ret_type_str}")
+        # --- REAL PASS TO GENERATE CODE ---
+        if ret_type_str == "array" and actual_inferred_ir_type is not None:
+            return_ir_type = actual_inferred_ir_type
         else:
-            return_ir_type = self.type_map[ret_type_str]
+            return_ir_type = self.type_map.get(ret_type_str, ir.VoidType())
     
-
         func = ir.Function(self.module, ir.FunctionType(return_ir_type, param_types), name=name)
-
-
         self.env.define(name, func, return_ir_type)
 
         block = func.append_basic_block(f'{name}_entry')
@@ -712,44 +720,34 @@ class Compiler:
             if time_func_res and srand_func_res:
                 time_func, _ = time_func_res
                 srand_func, _ = srand_func_res
-                
                 null_ptr = ir.Constant(ir.IntType(32).as_pointer(), None)
                 time_val = self.builder.call(time_func, [null_ptr], 'time_seed')
-               
                 self.builder.call(srand_func, [time_val])
-
             self.history_vars = {}
             self.history_idx_ptr = self.builder.alloca(ir.IntType(32), name="history_idx")
             self.history_len_ptr = self.builder.alloca(ir.IntType(32), name="history_len")
             self.builder.store(ir.Constant(ir.IntType(32), -1), self.history_idx_ptr)
             self.builder.store(ir.Constant(ir.IntType(32), 0), self.history_len_ptr)
 
-        params_ptr = []
         for i, param_name in enumerate(param_names):
             if isinstance(param_types[i], ir.PointerType) and isinstance(param_types[i].pointee, ir.ArrayType): # type: ignore
-                
                 self.env.define(param_name, func.args[i], param_types[i])
             else:
-                
                 ptr = self.builder.alloca(param_types[i], name=param_name)
                 self.builder.store(func.args[i], ptr)
                 self.env.define(param_name, ptr, param_types[i])
-
-                
         
-
         self.compile(body)
 
-        if ret_type_str == "void" and not any(isinstance(stmt, ReturnStatement) for stmt in body.statements):
-            self.builder.ret_void()
+        if self.builder.block is not None and not self.builder.block.is_terminated:
+            if ret_type_str == "void":
+                self.builder.ret_void()
 
         if name == "main":
             self.is_in_main = False 
 
-    
         self.builder = previous_builder
         self.env=previous_env
-
 
     def visit_assign_statement(self, node: AssignStatement) -> None:
         if isinstance(node.ident, IdentifierLiteral):
@@ -3118,44 +3116,42 @@ class Compiler:
         self.builder = ir.IRBuilder(dummy_block)
         self.env = Environment(parent=global_env)
 
-        
+        self.env.define(name, dummy_func, ir.VoidType())
+
         for i, param_name in enumerate(param_names):
-            
             if isinstance(param_types[i], ir.PointerType) and isinstance(param_types[i].pointee, ir.ArrayType): # type: ignore
-                
                 null_ptr_for_type_checking = ir.Constant(param_types[i], None)
                 self.env.define(param_name, null_ptr_for_type_checking, param_types[i])
             else:
                 dummy_alloca = self.builder.alloca(param_types[i])
                 self.env.define(param_name, dummy_alloca, param_types[i])
         
-        
         self.compile(body)
 
         inferred_type = "void"
+        inferred_ir_type_actual = self._find_and_infer_return_type(body)
+
         if node.return_type:
             inferred_type = node.return_type
-        else:
-            for stmt in body.statements:
-                if isinstance(stmt, ReturnStatement) and stmt.return_value is not None:
-                    result = self.resolve_value(stmt.return_value)
-                    if result:
-                        _, inferred_ir_type = result
-                        if isinstance(inferred_ir_type, ir.IntType) and inferred_ir_type.width == 1: inferred_type = "bool"
-                        elif isinstance(inferred_ir_type, ir.IntType): inferred_type = "int"
-                        elif isinstance(inferred_ir_type, ir.FloatType): inferred_type = "float"
-                        elif isinstance(inferred_ir_type, ir.DoubleType): inferred_type = "double"
-                        elif isinstance(inferred_ir_type, ir.PointerType): inferred_type = "array"
-                        break
+        elif inferred_ir_type_actual:
+            if isinstance(inferred_ir_type_actual, ir.IntType) and inferred_ir_type_actual.width == 1: inferred_type = "bool"
+            elif isinstance(inferred_ir_type_actual, ir.IntType): inferred_type = "int"
+            elif isinstance(inferred_ir_type_actual, ir.FloatType): inferred_type = "float"
+            elif isinstance(inferred_ir_type_actual, ir.DoubleType): inferred_type = "double"
+            elif isinstance(inferred_ir_type_actual, ir.PointerType): inferred_type = "array"
 
-        return_ir_type = self.type_map.get(inferred_type, ir.IntType(32).as_pointer() if inferred_type == "array" else ir.VoidType())
+        if inferred_type == "array" and inferred_ir_type_actual is not None:
+             return_ir_type = inferred_ir_type_actual
+        else:
+             return_ir_type = self.type_map.get(inferred_type, ir.IntType(32).as_pointer() if inferred_type == "array" else ir.VoidType())
 
         self.builder = caller_builder
         self.env = caller_env
 
         func_type = ir.FunctionType(return_ir_type, param_types)
         func = ir.Function(self.module, func_type, name=mangled_name)
-        self.env.define(mangled_name, func, return_ir_type)
+
+        global_env.define(mangled_name, func, return_ir_type)
 
         caller_builder = self.builder
         caller_env = self.env
@@ -3164,10 +3160,12 @@ class Compiler:
         self.is_in_main = False
         block = func.append_basic_block(f'{mangled_name}_entry')
         self.builder = ir.IRBuilder(block)
-        self.env = Environment(parent=global_env, name=mangled_name)
-
+        
+        
+        self.env = Environment(parent=caller_env, name=mangled_name)
+        
         for i, param_name in enumerate(param_names):
-            if isinstance(param_types[i], ir.PointerType) and isinstance(param_types[i].pointee, ir.ArrayType): # type: ignore
+            if isinstance(param_types[i], ir.PointerType) and isinstance(param_types[i].pointee, ir.ArrayType):# type: ignore
                 self.env.define(param_name, func.args[i], param_types[i])
             else:
                 ptr = self.builder.alloca(param_types[i], name=param_name)
@@ -3180,13 +3178,11 @@ class Compiler:
             if inferred_type == "void":
                 self.builder.ret_void()
 
-        
         self.builder = caller_builder
         self.env = caller_env
         self.is_in_main = was_in_main
 
         return func, return_ir_type
-    
     
     def visit_reserve_call(self, node: ReserveCall) -> tuple[ir.Value, ir.Type] | None:
         size_result = self.resolve_value(node.size_expr)

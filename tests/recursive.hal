@@ -1,0 +1,15 @@
+fun factorial(var n)
+    if n == 0
+        return 1;
+    fi
+
+    return n * factorial(n - 1);
+nuf
+
+fun main()
+    print("enter a number to find a factorial of: ");
+    var num = input() :int;
+    var result = factorial(num);
+    print("Factorial of ", num, " is ", result);
+    return 0;
+nuf

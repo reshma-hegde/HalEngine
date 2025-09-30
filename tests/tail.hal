@@ -1,0 +1,20 @@
+
+fun fact_acc(var n, var acc)
+    if n == 0
+        return acc;
+    fi
+
+    return fact_acc(n - 1, n * acc);
+nuf
+
+fun factorial_tail(var n)
+    return fact_acc(n, 1);
+nuf
+
+fun main()
+    print("enter a number to find a tail-recursive factorial of: ");
+    var num = input():int;
+    var result = factorial_tail(num);
+    print("Tail-recursive factorial of ", num, " is ", result);
+    return 0;
+nuf
