@@ -160,7 +160,13 @@ class Compiler:
             null_var.global_constant = True
             return null_var
         
-              
+        def __init_realloc()->ir.Function:
+            fnty:ir.FunctionType=ir.FunctionType(
+                ir.IntType(8).as_pointer(), # return type: void* (i8*)
+                [ir.IntType(8).as_pointer(), ir.IntType(32)], # args: void* (i8*), size_t (i32)
+                var_arg=False
+            )
+            return ir.Function(self.module,fnty,'realloc')     
 
         def __init_malloc()->ir.Function:
             fnty:ir.FunctionType=ir.FunctionType(
@@ -232,6 +238,7 @@ class Compiler:
         self.env.define('print',__init_print(),ir.IntType(32))
         self.env.define('input',__init_scanf(),ir.IntType(32))
         self.env.define('reserve', __init_malloc(), ir.IntType(8).as_pointer())
+        self.env.define('realloc', __init_realloc(), ir.IntType(8).as_pointer())
         self.env.define('free', __init_free(), ir.VoidType())
         true_var,false_var=__init_booleans()
         self.env.define('true',true_var,true_var.type)
@@ -2235,6 +2242,80 @@ class Compiler:
             self.report_error("CallExpression function must be an identifier with a name.")
             return None
         name: str = node.function.value
+
+        if name == "realloc":
+            if len(params) != 2:
+                self.report_error("realloc() requires exactly 2 arguments: an array identifier and a new size.")
+                return None
+
+            # Argument 1: Must be a direct variable identifier
+            array_arg_expr = params[0]
+            if not isinstance(array_arg_expr, IdentifierLiteral):
+                self.report_error("The first argument to realloc() must be a direct array variable identifier.")
+                return None
+            
+            array_name = array_arg_expr.value
+            if array_name is None: return self.report_error("Invalid array name in realloc().")
+
+            var_entry = self.env.lookup(array_name)
+            if var_entry is None: return self.report_error(f"Variable '{array_name}' not found for realloc().")
+            
+            variable_storage_ptr, var_type = var_entry # This is the alloca on the stack
+            
+            # The variable must hold a pointer type (our dynamic array)
+            if not isinstance(var_type, ir.PointerType):
+                 return self.report_error(f"Cannot realloc a non-array type: '{array_name}'.")
+
+            current_typed_data_ptr = self.builder.load(variable_storage_ptr, "current_data_ptr")
+            
+            # Argument 2: Resolve the new size expression
+            new_size_expr = params[1]
+            new_size_resolved = self.resolve_value(new_size_expr)
+            if new_size_resolved is None: return self.report_error("Could not resolve new size for realloc().")
+            new_size_val, _ = new_size_resolved
+
+            # --- Codegen for Reallocation ---
+            element_type = current_typed_data_ptr.type.pointee # type: ignore
+            
+            if isinstance(element_type, ir.IntType): element_size_bytes = element_type.width // 8
+            elif isinstance(element_type, ir.FloatType): element_size_bytes = 4
+            elif isinstance(element_type, ir.DoubleType): element_size_bytes = 8
+            else: element_size_bytes = 8 # Pointers are 8 bytes on 64-bit systems
+            
+            element_size_val = ir.Constant(ir.IntType(32), element_size_bytes)
+            
+            new_data_size_bytes = self.builder.mul(new_size_val, element_size_val, "new_data_size")
+            header_size_val = ir.Constant(ir.IntType(32), 4)
+            total_new_size_bytes = self.builder.add(new_data_size_bytes, header_size_val, "total_new_size")
+
+            # Get pointer to the start of the memory block (the header)
+            current_data_ptr_i8 = self.builder.bitcast(current_typed_data_ptr, ir.IntType(8).as_pointer(), "data_as_i8")
+            header_offset = ir.Constant(ir.IntType(32), -4)
+            current_header_ptr_i8 = self.builder.gep(current_data_ptr_i8, [header_offset], inbounds=True, name="current_header_ptr")
+            
+            realloc_func_res = self.env.lookup('realloc')
+            if realloc_func_res is None: return self.report_error("Internal error: C function 'realloc' not found.")
+            realloc_func, _ = realloc_func_res
+
+            # Call C's realloc
+            new_header_ptr_i8 = self.builder.call(realloc_func, [current_header_ptr_i8, total_new_size_bytes], "new_block_ptr")
+
+            # Store the new size in the resized block's header
+            new_len_ptr = self.builder.bitcast(new_header_ptr_i8, ir.IntType(32).as_pointer(), "new_header_len_ptr")
+            self.builder.store(new_size_val, new_len_ptr)
+
+            # Get the new data pointer (starts after the 4-byte header)
+            new_data_ptr_i8 = self.builder.gep(new_header_ptr_i8, [header_size_val], inbounds=True, name="new_data_i8_ptr")
+            
+            # Cast it back to the original typed pointer (e.g., i32*, float*)
+            new_typed_data_ptr = self.builder.bitcast(new_data_ptr_i8, current_typed_data_ptr.type, "new_typed_data_ptr")
+
+            # Store the new heap pointer back into the stack variable, updating it
+            self.builder.store(new_typed_data_ptr, variable_storage_ptr)
+            
+            # This call acts as a statement; return a dummy value that will be discarded.
+            return ir.Constant(ir.IntType(32), 0), ir.IntType(32)
+
 
         vector_struct_type = self.struct_types.get("vector")
         zero = ir.Constant(ir.IntType(32), 0)

@@ -1,34 +1,25 @@
 fun main()
     array nums = [1, 2, 3, 4];
-    var count = len(nums);
-    var index = 2;
+    var index = 2;      
+    var value = 278;    
 
-    print("count=", len(nums));
-    print("before");
+    print("before count= ",len(nums));
     
-    var i = 0;
-    while i < len(nums)
-        print(nums[i]);
-        i = i + 1;
-    elihw
+    print(nums);
 
-    i = count - 1;
-    while i >= index
-        nums[i + 1] = nums[i];
+   
+    realloc(nums, len(nums) + 1);
+
+    var i = len(nums) - 1;
+    while i > index
+        nums[i] = nums[i - 1];
         i = i - 1;
     elihw
+    nums[index] = value;
 
-    nums[index] = 278;
-    count = count + 1;
+    print("after count= ",len(nums));
+    print(nums);
 
-    print("after");
-    i = 0;
-    while i < count
-        print(nums[i]);
-        i = i + 1;
-    elihw
-
-    print("count:", count);
 
     return 0;
 nuf

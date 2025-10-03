@@ -1,0 +1,25 @@
+fun swap(var a, var b)
+    var temp = deref(a);
+    deref(a) = deref(b);
+    deref(b) = temp;
+nuf
+
+fun main()
+    var x = 10;
+    var y = 20;
+
+    print("Before swap:");
+    print("x = ", x, " y = ", y);
+
+   
+    var px = ref(x);
+    var py = ref(y);
+
+    
+    swap(px, py);
+
+    print("After swap:");
+    print("x = ", x, " y = ", y);
+
+    return 0;
+nuf
