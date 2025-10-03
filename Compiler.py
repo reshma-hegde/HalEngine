@@ -450,6 +450,7 @@ class Compiler:
         initial_value = self.builder.load(var_ptr, name=f"{target_var_name}_snapshot")
 
         outcome_values: List[ir.Value] = []
+        outcome_types: List[ir.Type] = []
 
         for branch in node.branches:
             
@@ -459,6 +460,7 @@ class Compiler:
             
             final_value = self.builder.load(var_ptr, name=f"{target_var_name}_outcome")
             outcome_values.append(final_value)
+            outcome_types.append(final_value.type)
 
         
         if not outcome_values:
@@ -471,20 +473,34 @@ class Compiler:
 
         num_outcomes = len(outcome_values)
        
-        outcome_element_type = getattr(outcome_values[0], "type", None)
+        # Determine the most general numeric type for the array
+        outcome_element_type = outcome_types[0]
+        is_numeric = all(isinstance(t, (ir.IntType, ir.FloatType, ir.DoubleType)) for t in outcome_types)
+        if is_numeric:
+            if any(isinstance(t, ir.DoubleType) for t in outcome_types):
+                outcome_element_type = self.type_map['double']
+            elif any(isinstance(t, ir.FloatType) for t in outcome_types):
+                outcome_element_type = self.type_map['float']
+        
         array_type = ir.ArrayType(outcome_element_type, num_outcomes)
-
         result_array_ptr = self.builder.alloca(array_type, name=merge_var_name)
 
         for i, value in enumerate(outcome_values):
+            # Promote value if necessary
+            promoted_value = value
+            value_type = getattr(value, "type", None)
+            if value_type != outcome_element_type:
+                if isinstance(outcome_element_type, (ir.FloatType, ir.DoubleType)) and isinstance(value_type, ir.IntType):
+                    promoted_value = self.builder.sitofp(value, outcome_element_type)
+                # Add other promotions if needed
+
             idx = ir.Constant(ir.IntType(32), i)
             element_ptr = self.builder.gep(result_array_ptr, [ir.Constant(ir.IntType(32), 0), idx], inbounds=True)
-            self.builder.store(value, element_ptr)
+            self.builder.store(promoted_value, element_ptr)
 
         self.env.define(merge_var_name, result_array_ptr, result_array_ptr.type)
         if merge_var_name:
              self.array_lengths[merge_var_name] = num_outcomes
-    
               
         
 
@@ -2302,7 +2318,8 @@ class Compiler:
             self.builder.cbranch(cond_v, loop_body_v, loop_exit_v)
             self.builder.position_at_start(loop_body_v)
            
-            src_elem_ptr = self.builder.gep(elems_array_ptr, [zero, i_v], inbounds=True)
+            src_elem_ptr = self.builder.gep(elems_array_ptr, [i_v], inbounds=True)
+            
             elem_val = self.builder.load(src_elem_ptr)
             promoted_val = elem_val
            
@@ -2432,7 +2449,7 @@ class Compiler:
             return result_vec_ptr, ir.PointerType(vector_struct_type)
         
         
-        if name == "abs": 
+        if name == "magnitude": 
             if len(params) != 1: 
                 return self.report_error("abs() requires one argument.")
             arg_res = self.resolve_value(params[0])
@@ -2698,8 +2715,7 @@ class Compiler:
         #print(f">>> CallExpression: calling function '{name}' with {len(params)} arguments")
         
         if name == "print":
-        
-            if len(params) == 0:
+            if not params:
                 return self.report_error("print() requires at least one argument.")
 
             printf_func, _ = self.env.lookup("print") # type: ignore
@@ -2712,22 +2728,33 @@ class Compiler:
                     continue
                 
                 val, val_type = result
+                is_fixed_array = (
+                    isinstance(val_type, ir.PointerType) and 
+                    isinstance(getattr(val_type, 'pointee', None), ir.ArrayType)
+                )
 
-                if isinstance(val_type, ir.PointerType) and isinstance(val_type.pointee, ir.ArrayType): # type: ignore
-                    array_ptr = val
-                    array_ir_type = val_type.pointee # type: ignore
-                    element_type = array_ir_type.element
-                    array_len = array_ir_type.count
+                vector_struct_type = self.struct_types.get("vector")
+                is_vector = (vector_struct_type and 
+                             isinstance(val_type, ir.PointerType) and 
+                             val_type.pointee == vector_struct_type) # type: ignore
+
+                if is_vector:
+                    self.builder.call(self.print_vector_func, [val])
+                    continue
+
+                if is_fixed_array:
+                    array_len = val_type.pointee.count # type: ignore
+                    element_type = val_type.pointee.element # type: ignore
 
                     open_bracket_fmt, _ = self.convert_string("[")
                     open_bracket_ptr = self.builder.gep(open_bracket_fmt, [zero, zero], inbounds=True)
                     self.builder.call(printf_func, [open_bracket_ptr])
 
-                    loop_entry = self.builder.append_basic_block("array_print_entry")
-                    loop_body = self.builder.append_basic_block("array_print_body")
-                    loop_exit = self.builder.append_basic_block("array_print_exit")
+                    loop_entry = self.builder.append_basic_block("fixed_array_print_entry")
+                    loop_body = self.builder.append_basic_block("fixed_array_print_body")
+                    loop_exit = self.builder.append_basic_block("fixed_array_print_exit")
 
-                    counter_ptr = self.builder.alloca(ir.IntType(32), name='i_array_print')
+                    counter_ptr = self.builder.alloca(ir.IntType(32), name='i_fixed_array_print')
                     self.builder.store(ir.Constant(ir.IntType(32), 0), counter_ptr)
                     self.builder.branch(loop_entry)
 
@@ -2737,14 +2764,13 @@ class Compiler:
                     self.builder.cbranch(cond, loop_body, loop_exit)
 
                     self.builder.position_at_start(loop_body)
-
                     is_not_first = self.builder.icmp_signed('!=', i, ir.Constant(ir.IntType(32), 0))
                     with self.builder.if_then(is_not_first):
                         separator_fmt, _ = self.convert_string(", ")
                         separator_ptr = self.builder.gep(separator_fmt, [zero, zero], inbounds=True)
                         self.builder.call(printf_func, [separator_ptr])
-
-                    element_ptr_gep = self.builder.gep(array_ptr, [zero, i], inbounds=True)
+                    
+                    element_ptr_gep = self.builder.gep(val, [zero, i], inbounds=True)
                     element_val = self.builder.load(element_ptr_gep)
 
                     elem_format_str = ""
@@ -2756,6 +2782,7 @@ class Compiler:
                         elem_format_str = "%f"
                     elif isinstance(element_type, ir.FloatType):
                         elem_format_str = "%f"
+                        
                         arg_to_pass = self.builder.fpext(element_val, ir.DoubleType())
                     elif isinstance(element_type, ir.IntType) and element_type.width == 1:
                         elem_format_str = "%s"
@@ -2763,8 +2790,9 @@ class Compiler:
                         false_ptr = self.builder.gep(self.false_str, [zero, zero], inbounds=True)
                         arg_to_pass = self.builder.select(element_val, true_ptr, false_ptr)
                     elif isinstance(element_type, ir.PointerType) and isinstance(element_type.pointee, ir.IntType) and element_type.pointee.width == 8: # type: ignore
-                        elem_format_str = "%s"
-
+                        
+                        elem_format_str = "\"%s\""
+                    
                     if elem_format_str:
                         fmt_g, _ = self.convert_string(elem_format_str)
                         fmt_p = self.builder.gep(fmt_g, [zero, zero], inbounds=True)
@@ -2781,23 +2809,93 @@ class Compiler:
                     close_bracket_ptr = self.builder.gep(close_bracket_fmt, [zero, zero], inbounds=True)
                     self.builder.call(printf_func, [close_bracket_ptr])
                     continue
-                
-                is_vec = isinstance(val_type, ir.PointerType) and val_type.pointee == vector_struct_type # type: ignore
-                if is_vec:
-                    self.builder.call(self.print_vector_func, [val])
+
+                is_dynamic_array = (
+                    isinstance(val_type, ir.PointerType) and 
+                    val_type != ir.IntType(8).as_pointer() and 
+                    isinstance(val_type.pointee, (ir.IntType, ir.FloatType, ir.DoubleType, ir.PointerType)) # type: ignore
+                )
+
+                if is_dynamic_array:
+                    data_ptr = val
+                    element_type = val_type.pointee # type: ignore
+
+                    data_ptr_as_i8 = self.builder.bitcast(data_ptr, ir.IntType(8).as_pointer())
+                    header_offset = ir.Constant(ir.IntType(32), -4)
+                    len_header_ptr_i8 = self.builder.gep(data_ptr_as_i8, [header_offset], inbounds=True)
+                    len_ptr = self.builder.bitcast(len_header_ptr_i8, ir.IntType(32).as_pointer())
+                    array_len = self.builder.load(len_ptr, "dyn_array_len")
+
+                    open_bracket_fmt, _ = self.convert_string("[")
+                    open_bracket_ptr = self.builder.gep(open_bracket_fmt, [zero, zero], inbounds=True)
+                    self.builder.call(printf_func, [open_bracket_ptr])
+
+                    loop_entry = self.builder.append_basic_block("dyn_array_print_entry")
+                    loop_body = self.builder.append_basic_block("dyn_array_print_body")
+                    loop_exit = self.builder.append_basic_block("dyn_array_print_exit")
+
+                    counter_ptr = self.builder.alloca(ir.IntType(32), name='i_dyn_array_print')
+                    self.builder.store(ir.Constant(ir.IntType(32), 0), counter_ptr)
+                    self.builder.branch(loop_entry)
+
+                    self.builder.position_at_start(loop_entry)
+                    i = self.builder.load(counter_ptr)
+                    cond = self.builder.icmp_signed('<', i, array_len)
+                    self.builder.cbranch(cond, loop_body, loop_exit)
+
+                    self.builder.position_at_start(loop_body)
+                    is_not_first = self.builder.icmp_signed('!=', i, ir.Constant(ir.IntType(32), 0))
+                    with self.builder.if_then(is_not_first):
+                        separator_fmt, _ = self.convert_string(", ")
+                        separator_ptr = self.builder.gep(separator_fmt, [zero, zero], inbounds=True)
+                        self.builder.call(printf_func, [separator_ptr])
+                    
+                    element_ptr_gep = self.builder.gep(data_ptr, [i], inbounds=True)
+                    element_val = self.builder.load(element_ptr_gep)
+
+                    
+                    elem_format_str = ""
+                    arg_to_pass = element_val
+                    
+                    if isinstance(element_type, ir.IntType) and element_type.width == 32:
+                        elem_format_str = "%d"
+                    elif isinstance(element_type, ir.DoubleType):
+                        elem_format_str = "%f"
+                    elif isinstance(element_type, ir.FloatType):
+                        elem_format_str = "%f"
+                        
+                        arg_to_pass = self.builder.fpext(element_val, ir.DoubleType())
+                    elif isinstance(element_type, ir.IntType) and element_type.width == 1:
+                        elem_format_str = "%s"
+                        true_ptr = self.builder.gep(self.true_str, [zero, zero], inbounds=True)
+                        false_ptr = self.builder.gep(self.false_str, [zero, zero], inbounds=True)
+                        arg_to_pass = self.builder.select(element_val, true_ptr, false_ptr)
+                    elif isinstance(element_type, ir.PointerType) and isinstance(element_type.pointee, ir.IntType) and element_type.pointee.width == 8: # type: ignore
+                        
+                        elem_format_str = "\"%s\""
+                    
+                    if elem_format_str:
+                        fmt_g, _ = self.convert_string(elem_format_str)
+                        fmt_p = self.builder.gep(fmt_g, [zero, zero], inbounds=True)
+                        self.builder.call(printf_func, [fmt_p, arg_to_pass])
+                    else:
+                        self.report_error(f"Printing array with element type {element_type} is not supported.")
+                    
+                    next_i = self.builder.add(i, ir.Constant(ir.IntType(32), 1))
+                    self.builder.store(next_i, counter_ptr)
+                    self.builder.branch(loop_entry)
+
+                    self.builder.position_at_start(loop_exit)
+                    close_bracket_fmt, _ = self.convert_string("]")
+                    close_bracket_ptr = self.builder.gep(close_bracket_fmt, [zero, zero], inbounds=True)
+                    self.builder.call(printf_func, [close_bracket_ptr])
                     continue
 
+                
                 format_str = ""
                 arg_to_pass = val
 
-                if isinstance(arg_expr, StringLiteral):
-                    format_str = arg_expr.value or ""
-                    fmt_global, _ = self.convert_string(format_str)
-                    fmt_ptr = self.builder.gep(fmt_global, [zero, zero], inbounds=True)
-                    self.builder.call(printf_func, [fmt_ptr])
-                    continue 
-
-                elif isinstance(val_type, ir.PointerType) and isinstance(val_type.pointee, ir.IntType) and val_type.pointee.width == 8: # type: ignore
+                if isinstance(val_type, ir.PointerType) and isinstance(val_type.pointee, ir.IntType) and val_type.pointee.width == 8: # type: ignore
                     format_str = "%s"
                 elif isinstance(val_type, ir.IntType) and val_type.width == 32:
                     format_str = "%d"
@@ -2823,8 +2921,8 @@ class Compiler:
             newline_ptr = self.builder.gep(newline_fmt, [zero, zero], inbounds=True)
             self.builder.call(printf_func, [newline_ptr])
             
-            return ir.Constant(ir.IntType(32), 0), ir.IntType(32) 
-
+            return ir.Constant(ir.IntType(32), 0), ir.IntType(32)
+      
         elif name == "free":
             if len(params) != 1:
                 self.report_error("free() requires exactly one pointer argument.")
@@ -2861,30 +2959,28 @@ class Compiler:
 
             arg_resolved = self.resolve_value(params[0])
             if arg_resolved is None:
+                self.report_error("Could not resolve argument for len().")
                 return None
 
-            _, arg_type = arg_resolved
+            data_ptr, data_ptr_type = arg_resolved
 
-            
-            if isinstance(arg_type, ir.ArrayType):
-                return ir.Constant(self.type_map['int'], arg_type.count), self.type_map['int']
+            if isinstance(data_ptr_type, ir.PointerType):
+                data_ptr_i8 = self.builder.bitcast(data_ptr, ir.IntType(8).as_pointer(), "data_ptr_as_i8")
+                
+                header_offset = ir.Constant(ir.IntType(32), -4)
+                len_header_ptr_i8 = self.builder.gep(data_ptr_i8, [header_offset], inbounds=True, name="len_header_i8_ptr")
+                
+                len_ptr = self.builder.bitcast(len_header_ptr_i8, ir.IntType(32).as_pointer(), name="len_ptr")
 
-            
-            if isinstance(arg_type, ir.PointerType) and isinstance(arg_type.pointee, ir.ArrayType):  # type: ignore
-                return ir.Constant(self.type_map['int'], arg_type.pointee.count), self.type_map['int']  # type: ignore
+                
+                array_len = self.builder.load(len_ptr, "array_len")
+                return array_len, self.type_map['int']
 
-            if isinstance(arg_type, ir.PointerType) and isinstance(arg_type.pointee, ir.IntType): # type: ignore
-                if isinstance(params[0], IdentifierLiteral) and params[0].value is not None:
-                    arr_name = params[0].value
-                    if arr_name in self.array_lengths:
-                        return ir.Constant(self.type_map['int'], self.array_lengths[arr_name]), self.type_map['int']
-                self.report_error("len() cannot determine size of pointer without stored length.")
-                return None
+            if isinstance(data_ptr_type, ir.ArrayType):
+                return ir.Constant(self.type_map['int'], data_ptr_type.count), self.type_map['int']
 
-            self.report_error("len() only works on fixed-size arrays.")
+            self.report_error("len() only works on array types.")
             return None
-        
-
 
         result = self.env.lookup(name)
         if result is None:
@@ -3562,7 +3658,7 @@ class Compiler:
                 
     def visit_array_literal(self, node: ArrayLiteral) -> tuple[ir.Value, ir.Type] | None:
         if not node.elements:
-            self.report_error("Array literals must have at least one element.")
+            self.report_error("Empty array literals are not supported.")
             return None
 
         element_values = []
@@ -3582,47 +3678,66 @@ class Compiler:
         
         if is_numeric:
             if any(isinstance(t, ir.DoubleType) for t in element_types):
-                target_type = ir.DoubleType()
+                target_type = self.type_map['double']
             elif any(isinstance(t, ir.FloatType) for t in element_types):
-                target_type = ir.FloatType()
+                target_type = self.type_map['float']
             else:
-                target_type = ir.IntType(32)
+                target_type = self.type_map['int']
         else:
             if not all(t == target_type for t in element_types):
-                self.report_error("All array elements must have the same type for non-numeric arrays.")
+                self.report_error("All elements in a non-numeric array must have the same type.")
                 return None
 
         promoted_values = []
-        for i, val in enumerate(element_values):
-            current_type = element_types[i]
+        for val, current_type in zip(element_values, element_types):
             if current_type == target_type:
                 promoted_values.append(val)
-            elif is_numeric:
+                continue
+            
+            promoted_val = None
+            if isinstance(target_type, ir.DoubleType):
                 if isinstance(current_type, ir.IntType):
-                    promoted_val = self.builder.sitofp(val, target_type)
-                    promoted_values.append(promoted_val)
-                elif isinstance(current_type, ir.FloatType) and isinstance(target_type, ir.DoubleType):
-                    promoted_val = self.builder.fpext(val, target_type)
-                    promoted_values.append(promoted_val)
+                    promoted_val = self.builder.sitofp(val, target_type, name="i_to_d")
+                elif isinstance(current_type, ir.FloatType):
+                    promoted_val = self.builder.fpext(val, target_type, name="f_to_d")
+            elif isinstance(target_type, ir.FloatType):
+                if isinstance(current_type, ir.IntType):
+                    promoted_val = self.builder.sitofp(val, target_type, name="i_to_f")
+            
+            if promoted_val is not None:
+                promoted_values.append(promoted_val)
             else:
-                self.report_error(f"Cannot mix types in array: found {current_type} and expected {target_type}")
+                self.report_error(f"Internal Error: Unhandled promotion from {current_type} to {target_type}")
                 return None
         
         array_len = len(promoted_values)
-        array_type = ir.ArrayType(target_type, array_len)
-
-        element_size_in_bytes = 4 
-        if isinstance(target_type, ir.DoubleType):
-            element_size_in_bytes = 8
-        elif isinstance(target_type, ir.IntType):
-            element_size_in_bytes = target_type.width // 8
+        element_type = target_type
         
-        total_size = self.builder.mul(
+        if isinstance(target_type, str):
+            if target_type not in self.type_map:
+                self.report_error(f"Unknown type: {target_type}")
+                return None
+            target_type = self.type_map[target_type]
+
+        
+        if isinstance(element_type, ir.IntType):
+            element_size_in_bytes = element_type.width // 8
+        elif isinstance(element_type, ir.FloatType):
+            element_size_in_bytes = 4
+        elif isinstance(element_type, ir.DoubleType):
+            element_size_in_bytes = 8
+        else:
+            
+            element_size_in_bytes = 8
+
+        data_size = self.builder.mul(
             ir.Constant(ir.IntType(32), element_size_in_bytes),
             ir.Constant(ir.IntType(32), array_len),
-            name="array_size_bytes"
+            name="data_size_bytes"
         )
-        
+        header_size = ir.Constant(ir.IntType(32), 4) 
+        total_size = self.builder.add(header_size, data_size, name="total_array_size")
+
         malloc_func_result = self.env.lookup("reserve")
         if malloc_func_result is None:
             self.report_error("Built-in function 'reserve' (malloc) not found.")
@@ -3630,21 +3745,27 @@ class Compiler:
         malloc_func, _ = malloc_func_result
         raw_ptr = self.builder.call(malloc_func, [total_size], name="raw_heap_ptr")
 
-        array_ptr = self.builder.bitcast(raw_ptr, ir.PointerType(array_type), name="typed_heap_ptr")
+        len_ptr = self.builder.bitcast(raw_ptr, ir.IntType(32).as_pointer(), name="len_header_ptr")
+        self.builder.store(ir.Constant(ir.IntType(32), array_len), len_ptr)
 
-
+        data_ptr_i8 = self.builder.gep(raw_ptr, [header_size], inbounds=True, name="data_section_i8_ptr")
+        data_ptr_typed = self.builder.bitcast(data_ptr_i8, ir.PointerType(element_type), name="typed_data_ptr")
+        
+        
         for idx, val in enumerate(promoted_values):
             element_ptr = self.builder.gep(
-                array_ptr,
-                [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), idx)],
+                data_ptr_typed,
+                [ir.Constant(ir.IntType(32), idx)],
                 inbounds=True
             )
             self.builder.store(val, element_ptr)
-        if array_ptr is None:
-            return None
-        return array_ptr, ir.PointerType(array_type)
+        
+        
+        if data_ptr_typed is None:
+            self.report_error("Internal Error: Failed to create typed data pointer for array.")
+            return None  
+        return data_ptr_typed, ir.PointerType(element_type)
     
-
     def visit_array_index_expression(self, node: ArrayAccessExpression) -> tuple[ir.Value, ir.Type] | None:
         array_result = self.resolve_value(node.array)
         if array_result is None:
@@ -3658,34 +3779,27 @@ class Compiler:
             return None
         index_value, index_type = index_result
 
-        if not isinstance(index_type, ir.IntType) or index_type.width != 32:
-            self.report_error("Array index must be a 32-bit integer.")
+        if not isinstance(index_type, ir.IntType):
+            self.report_error("Array index must be an integer.")
             return None
 
-        if isinstance(array_type, ir.PointerType) and isinstance(array_type.pointee, ir.ArrayType): # type: ignore
-            elem_type = array_type.pointee.element  # type: ignore 
-            element_ptr = self.builder.gep(
-                array_val,
-                [ir.Constant(ir.IntType(32), 0), index_value],
-                inbounds=True,
-                name="array_element_ptr"
-            )
-        
-        elif isinstance(array_type, ir.PointerType) and isinstance(array_type.pointee, ir.IntType): # type: ignore
-            elem_type = array_type.pointee  # type: ignore 
+        if isinstance(array_type, ir.PointerType):
+            
+            elem_type = array_type.pointee # type: ignore
+            
             element_ptr = self.builder.gep(
                 array_val,
                 [index_value],
                 inbounds=True,
                 name="array_element_ptr"
             )
+        
         else:
-            self.report_error("Cannot index into non-array type.")
+            self.report_error(f"Cannot index into a non-pointer type. Got {array_type}")
             return None
 
-        loaded_value = self.builder.load(element_ptr, name="array_element")
+        loaded_value = self.builder.load(element_ptr, name="array_element_value")
         return loaded_value, elem_type
-
 
     def convert_string(self,string:str)->tuple[ir.GlobalVariable, ir.Type]:
         string=string.replace("\\n","\n\0")

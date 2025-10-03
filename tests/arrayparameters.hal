@@ -1,7 +1,8 @@
-fun adds(array a, var count)
+fun adds(array a)
     var total = 0;
     var i = 0;
-    while i < count
+    var c=len(a);
+    while i < c
         total += a[i];
         i = i + 1;
     elihw
@@ -10,8 +11,7 @@ nuf
 
 fun main()
     array a = [1, 2, 3, 4, 5];
-    var b=5;
-    var result = adds(a, b);
+    var result = adds(a);
     print(a);
     return result;
 nuf

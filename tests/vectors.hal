@@ -16,7 +16,7 @@ fun main()
     var c = cross(v1, v2);
     print("cross = ", c);
 
-    var mag = abs(v1);
+    var mag = magnitude(v1);
     print("mag = ", mag); 
     return 0;
-nuf
+nuf 

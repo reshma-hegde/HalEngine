@@ -1,0 +1,10 @@
+fun length(array a)
+var b=len(a);
+return b;
+nuf
+
+fun main()
+array a=[1,2,3,4,5];
+print(length(a));
+return 0;
+nuf

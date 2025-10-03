@@ -3,11 +3,11 @@ fun main()
     var count = len(nums);
     var index = 2;
 
-    print("count=", count);
+    print("count=", len(nums));
     print("before");
     
     var i = 0;
-    while i < count
+    while i < len(nums)
         print(nums[i]);
         i = i + 1;
     elihw

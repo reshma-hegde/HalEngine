@@ -6,6 +6,7 @@ fun main()
     print(floats);
     print(words);
     print(integers);
+    print(word);
     print(integers[2]);
     print(floats[0]);
     print(words[1]);
