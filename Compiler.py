@@ -162,8 +162,8 @@ class Compiler:
         
         def __init_realloc()->ir.Function:
             fnty:ir.FunctionType=ir.FunctionType(
-                ir.IntType(8).as_pointer(), # return type: void* (i8*)
-                [ir.IntType(8).as_pointer(), ir.IntType(32)], # args: void* (i8*), size_t (i32)
+                ir.IntType(8).as_pointer(), 
+                [ir.IntType(8).as_pointer(), ir.IntType(32)], 
                 var_arg=False
             )
             return ir.Function(self.module,fnty,'realloc')     
@@ -480,7 +480,6 @@ class Compiler:
 
         num_outcomes = len(outcome_values)
        
-        # Determine the most general numeric type for the array
         outcome_element_type = outcome_types[0]
         is_numeric = all(isinstance(t, (ir.IntType, ir.FloatType, ir.DoubleType)) for t in outcome_types)
         if is_numeric:
@@ -493,14 +492,13 @@ class Compiler:
         result_array_ptr = self.builder.alloca(array_type, name=merge_var_name)
 
         for i, value in enumerate(outcome_values):
-            # Promote value if necessary
+            
             promoted_value = value
             value_type = getattr(value, "type", None)
             if value_type != outcome_element_type:
                 if isinstance(outcome_element_type, (ir.FloatType, ir.DoubleType)) and isinstance(value_type, ir.IntType):
                     promoted_value = self.builder.sitofp(value, outcome_element_type)
-                # Add other promotions if needed
-
+                
             idx = ir.Constant(ir.IntType(32), i)
             element_ptr = self.builder.gep(result_array_ptr, [ir.Constant(ir.IntType(32), 0), idx], inbounds=True)
             self.builder.store(promoted_value, element_ptr)
@@ -599,8 +597,6 @@ class Compiler:
         resolved = self.resolve_value(expr)
 
         if resolved is None:
-            # **FIX:** Don't raise an error. This allows the dummy pass to
-            # survive recursive calls and infer the type from the base case.
             return
 
         value, typ = resolved
@@ -615,11 +611,7 @@ class Compiler:
         self.builder.ret(value)
 
     def _find_and_infer_return_type(self, node: Node) -> Optional[ir.Type]:
-        """
-        Recursively traverses an AST node to find the first resolvable
-        return statement and returns its IR type. This is crucial for
-        correctly inferring return types from functions with branches.
-        """
+        
         if isinstance(node, BlockStatement):
             for stmt in node.statements:
                 result = self._find_and_infer_return_type(stmt)
@@ -639,15 +631,11 @@ class Compiler:
                 if result:
                     return result
         elif isinstance(node, ReturnStatement) and node.return_value is not None:
-            # We attempt to resolve the value. If it succeeds (e.g., it's a literal
-            # or a simple expression), we use its type. If it fails (e.g., a
-            # recursive call we don't know the type of yet), it returns None,
-            # and we continue searching.
+            
             resolved = self.resolve_value(node.return_value)
             if resolved:
                 _, ir_type = resolved
                 return ir_type
-        # This can be extended for WhileStatement, etc., if they can contain returns.
         return None
 
     def visit_function_statement(self, node: FunctionStatement) -> None:
@@ -676,7 +664,7 @@ class Compiler:
             else:
                 param_types.append(ir.IntType(32))  
 
-        # --- DUMMY PASS FOR TYPE INFERENCE ---
+        
         global_env=self._get_global_env()
         previous_builder = self.builder
         previous_env = self.env
@@ -694,7 +682,7 @@ class Compiler:
 
         self.compile(body)
         
-        # **FIX:** Use the new recursive helper to find the return type.
+        
         actual_inferred_ir_type = self._find_and_infer_return_type(body)
         
         if node.return_type is None:
@@ -719,7 +707,7 @@ class Compiler:
         self.builder = previous_builder
         self.env = previous_env
 
-        # --- REAL PASS TO GENERATE CODE ---
+        
         if ret_type_str == "array" and actual_inferred_ir_type is not None:
             return_ir_type = actual_inferred_ir_type
         else:
@@ -2248,7 +2236,7 @@ class Compiler:
                 self.report_error("realloc() requires exactly 2 arguments: an array identifier and a new size.")
                 return None
 
-            # Argument 1: Must be a direct variable identifier
+            
             array_arg_expr = params[0]
             if not isinstance(array_arg_expr, IdentifierLiteral):
                 self.report_error("The first argument to realloc() must be a direct array variable identifier.")
@@ -2260,27 +2248,26 @@ class Compiler:
             var_entry = self.env.lookup(array_name)
             if var_entry is None: return self.report_error(f"Variable '{array_name}' not found for realloc().")
             
-            variable_storage_ptr, var_type = var_entry # This is the alloca on the stack
+            variable_storage_ptr, var_type = var_entry 
             
-            # The variable must hold a pointer type (our dynamic array)
+            
             if not isinstance(var_type, ir.PointerType):
                  return self.report_error(f"Cannot realloc a non-array type: '{array_name}'.")
 
             current_typed_data_ptr = self.builder.load(variable_storage_ptr, "current_data_ptr")
             
-            # Argument 2: Resolve the new size expression
             new_size_expr = params[1]
             new_size_resolved = self.resolve_value(new_size_expr)
             if new_size_resolved is None: return self.report_error("Could not resolve new size for realloc().")
             new_size_val, _ = new_size_resolved
 
-            # --- Codegen for Reallocation ---
+            
             element_type = current_typed_data_ptr.type.pointee # type: ignore
             
             if isinstance(element_type, ir.IntType): element_size_bytes = element_type.width // 8
             elif isinstance(element_type, ir.FloatType): element_size_bytes = 4
             elif isinstance(element_type, ir.DoubleType): element_size_bytes = 8
-            else: element_size_bytes = 8 # Pointers are 8 bytes on 64-bit systems
+            else: element_size_bytes = 8 
             
             element_size_val = ir.Constant(ir.IntType(32), element_size_bytes)
             
@@ -2288,7 +2275,7 @@ class Compiler:
             header_size_val = ir.Constant(ir.IntType(32), 4)
             total_new_size_bytes = self.builder.add(new_data_size_bytes, header_size_val, "total_new_size")
 
-            # Get pointer to the start of the memory block (the header)
+           
             current_data_ptr_i8 = self.builder.bitcast(current_typed_data_ptr, ir.IntType(8).as_pointer(), "data_as_i8")
             header_offset = ir.Constant(ir.IntType(32), -4)
             current_header_ptr_i8 = self.builder.gep(current_data_ptr_i8, [header_offset], inbounds=True, name="current_header_ptr")
@@ -2297,23 +2284,19 @@ class Compiler:
             if realloc_func_res is None: return self.report_error("Internal error: C function 'realloc' not found.")
             realloc_func, _ = realloc_func_res
 
-            # Call C's realloc
+            
             new_header_ptr_i8 = self.builder.call(realloc_func, [current_header_ptr_i8, total_new_size_bytes], "new_block_ptr")
 
-            # Store the new size in the resized block's header
+            
             new_len_ptr = self.builder.bitcast(new_header_ptr_i8, ir.IntType(32).as_pointer(), "new_header_len_ptr")
             self.builder.store(new_size_val, new_len_ptr)
 
-            # Get the new data pointer (starts after the 4-byte header)
             new_data_ptr_i8 = self.builder.gep(new_header_ptr_i8, [header_size_val], inbounds=True, name="new_data_i8_ptr")
             
-            # Cast it back to the original typed pointer (e.g., i32*, float*)
             new_typed_data_ptr = self.builder.bitcast(new_data_ptr_i8, current_typed_data_ptr.type, "new_typed_data_ptr")
 
-            # Store the new heap pointer back into the stack variable, updating it
             self.builder.store(new_typed_data_ptr, variable_storage_ptr)
             
-            # This call acts as a statement; return a dummy value that will be discarded.
             return ir.Constant(ir.IntType(32), 0), ir.IntType(32)
 
 
