@@ -1,0 +1,19 @@
+fun main()
+    print("Enter number of elements: ");
+    var n = input() :int;
+
+    array integers=[];
+    integers = reserve(n * 4);
+
+    var i = 0;
+    while i < n
+        print("Enter ",i," element ");
+        var value = input() :int;
+        integers[i] = value;
+        i = i + 1;
+    elihw
+
+    print(integers);
+    
+    return 0;
+nuf

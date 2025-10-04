@@ -2231,6 +2231,44 @@ class Compiler:
             return None
         name: str = node.function.value
 
+        if name == "reserve":
+            if len(params) != 1:
+                return self.report_error("reserve() requires exactly 1 size argument.")
+            
+            size_resolved = self.resolve_value(params[0])
+            if size_resolved is None:
+                return self.report_error("Could not resolve size for reserve().")
+            
+            data_size_bytes, _ = size_resolved
+
+            # **MODIFIED**: Assume reserve is for integers by default to return a typed pointer
+            element_type = self.type_map['int']
+            element_size_bytes = ir.Constant(ir.IntType(32), 4)
+            num_elements = self.builder.sdiv(data_size_bytes, element_size_bytes, "num_elements_from_size")
+
+            header_size_bytes = ir.Constant(ir.IntType(32), 4)
+            total_alloc_size = self.builder.add(header_size_bytes, data_size_bytes, "total_alloc_size")
+
+            malloc_func_res = self.env.lookup("reserve")
+            if malloc_func_res is None:
+                return self.report_error("Internal error: C function 'malloc' not found.")
+            
+            malloc_func, _ = malloc_func_res
+
+            raw_ptr = self.builder.call(malloc_func, [total_alloc_size], "raw_heap_ptr")
+
+            len_ptr = self.builder.bitcast(raw_ptr, ir.IntType(32).as_pointer(), "len_header_ptr")
+            self.builder.store(num_elements, len_ptr)
+
+            data_ptr_i8 = self.builder.gep(raw_ptr, [header_size_bytes], inbounds=True, name="data_section_i8_ptr")
+            
+            typed_data_ptr = self.builder.bitcast(data_ptr_i8, ir.PointerType(element_type), "typed_data_ptr")
+            if typed_data_ptr is None:
+                self.report_error("Internal error: bitcast to typed pointer failed.")
+                return None
+            return typed_data_ptr, ir.PointerType(element_type)
+        
+
         if name == "realloc":
             if len(params) != 2:
                 self.report_error("realloc() requires exactly 2 arguments: an array identifier and a new size.")
@@ -2992,28 +3030,27 @@ class Compiler:
                 self.report_error("free() requires exactly one pointer argument.")
                 return None
             
-            
             arg_result = self.resolve_value(params[0])
             if arg_result is None:
                 self.report_error("Could not resolve argument for free().")
                 return None
             
-            ptr_val, ptr_type = arg_result
+            data_ptr, _ = arg_result
 
-            i8_ptr_type = ir.IntType(8).as_pointer()
-            if ptr_type != i8_ptr_type:
-                ptr_val = self.builder.bitcast(ptr_val, i8_ptr_type)
+            ptr_val_i8 = self.builder.bitcast(data_ptr, ir.IntType(8).as_pointer())
+            
+            header_offset = ir.Constant(ir.IntType(32), -4)
+            block_start_ptr = self.builder.gep(ptr_val_i8, [header_offset], inbounds=True, name="block_start_ptr")
 
             free_func_result = self.env.lookup("free")
             if free_func_result is None:
-                
                 self.report_error("Built-in function 'free' not found.")
                 return None
 
             free_func, free_ret_type = free_func_result
             
-            ret = self.builder.call(free_func, [ptr_val])
-            return ret, free_ret_type 
+            ret = self.builder.call(free_func, [block_start_ptr])
+            return ret, free_ret_type
 
         
         elif name == "len":
@@ -3142,7 +3179,7 @@ class Compiler:
         ret: ir.Value = self.builder.call(func, args)
         
         return ret, ret_type
-
+    
 
     def visit_as_expression(self, node: "AsExpression") -> Optional[tuple[ir.Value, ir.Type]]:
         var_resolved = self.resolve_value(node.variable)
@@ -3350,20 +3387,33 @@ class Compiler:
             self.report_error("Could not resolve size argument for reserve().")
             return None
 
-        size_val, _ = size_result
+        data_size_bytes, _ = size_result
 
-        malloc_func_result = self.env.lookup("reserve")
-        if malloc_func_result is None:
-            self.report_error("Built-in function 'reserve' (malloc) not found.")
+        element_type = self.type_map['int']
+        element_size_const = ir.Constant(ir.IntType(32), 4)  
+
+        element_count = self.builder.sdiv(data_size_bytes, element_size_const, "elem_count")
+
+        header_size = ir.Constant(ir.IntType(32), 4)
+        total_size = self.builder.add(header_size, data_size_bytes, "total_array_size")
+
+        malloc_func_res = self.env.lookup("reserve")
+        if malloc_func_res is None:
+            return self.report_error("Internal error: C function 'malloc' not found.")
+        malloc_func, _ = malloc_func_res
+
+        raw_ptr = self.builder.call(malloc_func, [total_size], name="raw_heap_ptr")
+
+        len_ptr = self.builder.bitcast(raw_ptr, ir.IntType(32).as_pointer(), name="len_header_ptr")
+        self.builder.store(element_count, len_ptr)
+
+        data_ptr_i8 = self.builder.gep(raw_ptr, [header_size], inbounds=True, name="data_section_i8_ptr")
+
+        typed_data_ptr = self.builder.bitcast(data_ptr_i8, ir.PointerType(element_type), "typed_data_ptr")
+        if typed_data_ptr is None:
+            self.report_error("Internal error: bitcast to typed pointer failed.")
             return None
-        
-        malloc_func, _ = malloc_func_result
-
-        raw_ptr = cast(ir.Value, self.builder.call(malloc_func, [size_val], "malloc_ptr"))
-        int_ptr_type: ir.Type = ir.IntType(32).as_pointer()
-        cast_ptr = cast(ir.Value, self.builder.bitcast(raw_ptr, int_ptr_type, "int_ptr"))
-        return cast_ptr, int_ptr_type
-
+        return typed_data_ptr, ir.PointerType(element_type)
 
     def visit_prefix_expression(self,node:PrefixExpression)->tuple[ir.Value,ir.Type]|None:
         operator:str=node.operator
@@ -3722,8 +3772,26 @@ class Compiler:
                 
     def visit_array_literal(self, node: ArrayLiteral) -> tuple[ir.Value, ir.Type] | None:
         if not node.elements:
-            self.report_error("Empty array literals are not supported.")
-            return None
+            malloc_func_result = self.env.lookup("reserve")
+            if malloc_func_result is None:
+                self.report_error("Built-in function 'reserve' (malloc) not found.")
+                return None
+            malloc_func, _ = malloc_func_result
+
+            header_size = ir.Constant(ir.IntType(32), 4)
+            raw_ptr = self.builder.call(malloc_func, [header_size], name="empty_array_ptr")
+
+            len_ptr = self.builder.bitcast(raw_ptr, ir.IntType(32).as_pointer(), name="len_header_ptr")
+            self.builder.store(ir.Constant(ir.IntType(32), 0), len_ptr)
+
+            data_ptr_i8 = self.builder.gep(raw_ptr, [header_size], inbounds=True, name="data_section_i8_ptr")
+            
+            element_type = self.type_map['int']
+            typed_data_ptr = self.builder.bitcast(data_ptr_i8, ir.PointerType(element_type), name="typed_data_ptr")
+            if typed_data_ptr is None:
+                self.report_error("Internal Error: Failed to create typed data pointer for empty array.")
+                return None
+            return typed_data_ptr, ir.PointerType(element_type)
 
         element_values = []
         element_types = []
@@ -3829,7 +3897,7 @@ class Compiler:
             self.report_error("Internal Error: Failed to create typed data pointer for array.")
             return None  
         return data_ptr_typed, ir.PointerType(element_type)
-    
+
     def visit_array_index_expression(self, node: ArrayAccessExpression) -> tuple[ir.Value, ir.Type] | None:
         array_result = self.resolve_value(node.array)
         if array_result is None:
