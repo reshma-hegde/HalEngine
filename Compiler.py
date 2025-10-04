@@ -786,9 +786,30 @@ class Compiler:
 
             entry = self.env.lookup(name)
             if entry is None:
+                
+                this_entry = self.env.lookup("this")
+                if this_entry:
+                    this_ptr, this_type = this_entry
+                    class_type = this_type.pointee # type: ignore
+                    class_name = class_type.name
+                    layout = self.struct_layouts.get(class_name)
+                    
+                    if layout and name in layout:
+                        member_index = layout[name]
+                        zero = ir.Constant(ir.IntType(32), 0)
+                        idx = ir.Constant(ir.IntType(32), member_index)
+                        
+                        if node.operator == '=':
+                            member_ptr = self.builder.gep(this_ptr, [zero, idx], inbounds=True, name=f"{name}_ptr")
+                            self.builder.store(right_value, member_ptr)
+                            return 
+                        else:
+                            self.errors.append(f"COMPILE ERROR: Compound assignment ('{node.operator}') on class members is not yet supported.")
+                            return
+
                 self.errors.append(f"COMPILE ERROR: Identifier '{name}' has not been declared")
                 return
-
+            
             ptr, var_type = entry
             if ptr is None:
                 self.errors.append(f"COMPILE ERROR: No memory pointer for variable '{name}'")
@@ -2241,7 +2262,6 @@ class Compiler:
             
             data_size_bytes, _ = size_resolved
 
-            # **MODIFIED**: Assume reserve is for integers by default to return a typed pointer
             element_type = self.type_map['int']
             element_size_bytes = ir.Constant(ir.IntType(32), 4)
             num_elements = self.builder.sdiv(data_size_bytes, element_size_bytes, "num_elements_from_size")
@@ -3567,6 +3587,22 @@ class Compiler:
 
                 result = self.env.lookup(ident_node.value)
                 if result is None:
+                    this_entry = self.env.lookup("this")
+                    if this_entry:
+                        this_ptr, this_type = this_entry
+                        class_type = this_type.pointee # type: ignore
+                        class_name = class_type.name
+                        layout = self.struct_layouts.get(class_name)
+                        
+                        if layout and ident_node.value in layout:
+                            member_index = layout[ident_node.value]
+                            zero = ir.Constant(ir.IntType(32), 0)
+                            idx = ir.Constant(ir.IntType(32), member_index)
+                            
+                            member_ptr = self.builder.gep(this_ptr, [zero, idx], inbounds=True, name=f"{ident_node.value}_ptr")
+                            loaded_val = self.builder.load(member_ptr, name=ident_node.value)
+                            return loaded_val, loaded_val.type
+
                     self.report_error(f"Undefined variable '{ident_node.value}'")
                     return None
 
@@ -4096,6 +4132,7 @@ class Compiler:
             method_node.name.value = original_name
 
 
+   
     def compile_method_function(self, node: FunctionStatement, class_type: ir.IdentifiedStructType) -> None:
         if node.name is None or node.name.value is None:
             raise ValueError("Method name is missing.")
@@ -4104,20 +4141,44 @@ class Compiler:
         params: list[FunctionParameter] = node.parameters or []
         param_names: list[str] = [p.name for p in params if p.name]
         param_types: list[ir.Type] = [self.type_map.get(p.value_type if p.value_type is not None else 'int', self.type_map['int']) for p in params]
-        
+
+       
+        return_ir_type: ir.Type
+        if node.return_type:
+            return_ir_type = self.type_map.get(node.return_type, self.type_map['int'])
+        else:
+            previous_builder = self.builder
+            previous_env = self.env
+
+            dummy_module = ir.Module()
+            dummy_func_type = ir.FunctionType(ir.VoidType(), [])
+            dummy_func = ir.Function(dummy_module, dummy_func_type, "dummy_inference_func")
+            dummy_block = dummy_func.append_basic_block("entry")
+            self.builder = ir.IRBuilder(dummy_block)
+
+            inference_env = Environment(parent=self.env)
+            self.env = inference_env
+            inference_env.define("this", ir.Constant(ir.PointerType(class_type), None), ir.PointerType(class_type))
+            for i, param_name in enumerate(param_names):
+                dummy_alloca = self.builder.alloca(param_types[i])
+                inference_env.define(param_name, dummy_alloca, param_types[i])
+
+            if node.body:
+                self.compile(node.body)
+
+            inferred_type = self._find_and_infer_return_type(node.body) if node.body else None
+            return_ir_type = inferred_type if inferred_type is not None else self.type_map['void']
+
+            self.builder = previous_builder
+            self.env = previous_env
         
         this_param_type = ir.PointerType(class_type)
         final_param_types = [this_param_type] + param_types
-
-       
-        return_ir_type = self.type_map.get(node.return_type if node.return_type is not None else 'int', self.type_map['int'])
-        
         
         func_type = ir.FunctionType(return_ir_type, final_param_types)
         func = ir.Function(self.module, func_type, name=mangled_name)
         
         self.env.define(mangled_name, func, return_ir_type)
-
 
         block = func.append_basic_block(f'{mangled_name}_entry')
         previous_builder = self.builder
@@ -4138,9 +4199,14 @@ class Compiler:
         if node.body:
             self.compile(node.body)
 
+        if self.builder.block is not None and not self.builder.block.is_terminated:
+            if return_ir_type == ir.VoidType():
+                self.builder.ret_void()
+            else:
+                self.builder.ret(ir.Constant(return_ir_type, 0))
+
         self.builder = previous_builder
         self.env = previous_env
-
 
     def visit_struct_definition_statement(self, node: StructStatement) -> None:
         struct_name = node.name.value

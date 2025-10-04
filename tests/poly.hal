@@ -1,0 +1,41 @@
+
+class Shape
+    fun area()
+        return 0;
+    nuf
+ssalc
+
+class Circle -> Shape
+    var radius;
+
+    fun init(var r)
+        radius = r;
+    nuf
+
+    fun area()
+        return 3.14 * radius * radius;
+    nuf
+ssalc
+
+class Rectangle -> Shape
+    var width;
+    var height;
+
+    fun init(var w, var h)
+        width = w;
+        height = h;
+    nuf
+
+    fun area()
+        return width * height;
+    nuf
+ssalc
+
+fun main()
+    var s1 = Circle(5);
+    var s2 = Rectangle(10, 4);
+
+    print("Circle area: ", s1.area());
+    print("Rectangle area: ", s2.area());
+    return 0;
+nuf
