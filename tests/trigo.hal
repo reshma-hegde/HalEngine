@@ -1,0 +1,38 @@
+fun main()
+    var pi = 3.14159265d;
+
+    var angle1 = -30d * pi / 180d;  
+    var s1 = sin(angle1);
+    var c1 = cos(angle1);
+    var t1 = tan(angle1);
+    var cot1 = cot(angle1);
+    var sec1 = sec(angle1);
+    var cosec1 = cosec(angle1);
+
+    print("Angle: -30");
+    print("   sin: ", s1);
+    print("   cos: ", c1);
+    print("   tan: ", t1);
+    print("   cot: ", cot1);
+    print("   sec: ", sec1);
+    print("   cosec: ", cosec1);
+
+    
+    var angle2 = 30d * pi / 180d;  
+    var s2 = sin(angle2);
+    var c2 = cos(angle2);
+    var t2 = tan(angle2);
+    var cot2 = cot(angle2);
+    var sec2 = sec(angle2);
+    var cosec2 = cosec(angle2);
+
+    print("Angle: 30");
+    print("   sin: ", s2);
+    print("   cos: ", c2);
+    print("   tan: ", t2);
+    print("   cot: ", cot2);
+    print("   sec: ", sec2);
+    print("   cosec: ", cosec2);
+
+    return 0;
+nuf

@@ -3460,6 +3460,11 @@ class Compiler:
             match operator:
                 case '-':
                     value=self.builder.fmul(right_value,ir.Constant(ir.FloatType(),-1.0))
+        elif isinstance(right_type, ir.DoubleType):
+            Type=ir.DoubleType()
+            match operator:
+                case '-':
+                    value=self.builder.fmul(right_value,ir.Constant(ir.DoubleType(),-1.0))
         elif isinstance(right_type,ir.IntType):
             Type=ir.IntType(32)
             match operator:
@@ -3471,7 +3476,6 @@ class Compiler:
 
         self.report_error(f"Unsupported operator '{operator}' or incompatible operand types.")
         return None
-
 
     def visit_postfix_expression(self, node: PostfixExpression) -> ir.Value | None:
         print(">>> Visiting postfix expression:", type(node.left_node), node.operator)
@@ -3970,16 +3974,22 @@ class Compiler:
         return loaded_value, elem_type
 
     def convert_string(self,string:str)->tuple[ir.GlobalVariable, ir.Type]:
-        string=string.replace("\\n","\n\0")
-        fmt:str=f"{string}\0"
-        c_fmt:ir.Constant=ir.Constant(ir.ArrayType(ir.IntType(8),len(fmt)),bytearray(fmt.encode("utf8")))
+        # First, handle escaped newlines properly.
+        string=string.replace("\\n","\n")
+        # Add a single null terminator.
+        fmt_with_null = f"{string}\0"
+        
+        # Encode to bytes *before* calculating the length.
+        fmt_bytes = bytearray(fmt_with_null.encode("utf8"))
+        
+        # Use the correct byte length for the array type definition.
+        c_fmt = ir.Constant(ir.ArrayType(ir.IntType(8), len(fmt_bytes)), fmt_bytes)
 
-        global_fmt=ir.GlobalVariable(self.module,c_fmt.type,name=f'__str_{self.increment_counter()}')
-        global_fmt.linkage='internal'
-        global_fmt.global_constant=True
-        global_fmt.initializer=c_fmt # type: ignore
-        return global_fmt,global_fmt.type
-    
+        global_fmt = ir.GlobalVariable(self.module, c_fmt.type, name=f'__str_{self.increment_counter()}')
+        global_fmt.linkage = 'internal'
+        global_fmt.global_constant = True
+        global_fmt.initializer = c_fmt # type: ignore
+        return global_fmt, global_fmt.type
 
     def builtin_printf(self, params: list[ir.Value], return_type: ir.Type) -> ir.Instruction | None:
         func_pair = self.env.lookup("print")
