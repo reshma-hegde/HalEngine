@@ -2291,36 +2291,27 @@ class Compiler:
 
         if name == "realloc":
             if len(params) != 2:
-                self.report_error("realloc() requires exactly 2 arguments: an array identifier and a new size.")
+                self.report_error("realloc() requires exactly 2 arguments: a pointer and a new size.")
                 return None
 
             
-            array_arg_expr = params[0]
-            if not isinstance(array_arg_expr, IdentifierLiteral):
-                self.report_error("The first argument to realloc() must be a direct array variable identifier.")
+            array_ptr_resolved = self.resolve_value(params[0])
+            if array_ptr_resolved is None:
+                self.report_error("Could not resolve array pointer for realloc().")
                 return None
-            
-            array_name = array_arg_expr.value
-            if array_name is None: return self.report_error("Invalid array name in realloc().")
-
-            var_entry = self.env.lookup(array_name)
-            if var_entry is None: return self.report_error(f"Variable '{array_name}' not found for realloc().")
-            
-            variable_storage_ptr, var_type = var_entry 
-            
+            current_typed_data_ptr, var_type = array_ptr_resolved
             
             if not isinstance(var_type, ir.PointerType):
-                 return self.report_error(f"Cannot realloc a non-array type: '{array_name}'.")
+                return self.report_error(f"Cannot realloc a non-pointer type: '{var_type}'.")
 
-            current_typed_data_ptr = self.builder.load(variable_storage_ptr, "current_data_ptr")
             
-            new_size_expr = params[1]
-            new_size_resolved = self.resolve_value(new_size_expr)
-            if new_size_resolved is None: return self.report_error("Could not resolve new size for realloc().")
+            new_size_resolved = self.resolve_value(params[1])
+            if new_size_resolved is None:
+                return self.report_error("Could not resolve new size for realloc().")
             new_size_val, _ = new_size_resolved
 
             
-            element_type = current_typed_data_ptr.type.pointee # type: ignore
+            element_type = var_type.pointee # type: ignore
             
             if isinstance(element_type, ir.IntType): element_size_bytes = element_type.width // 8
             elif isinstance(element_type, ir.FloatType): element_size_bytes = 4
@@ -2332,30 +2323,28 @@ class Compiler:
             new_data_size_bytes = self.builder.mul(new_size_val, element_size_val, "new_data_size")
             header_size_val = ir.Constant(ir.IntType(32), 4)
             total_new_size_bytes = self.builder.add(new_data_size_bytes, header_size_val, "total_new_size")
-
-           
+            
             current_data_ptr_i8 = self.builder.bitcast(current_typed_data_ptr, ir.IntType(8).as_pointer(), "data_as_i8")
             header_offset = ir.Constant(ir.IntType(32), -4)
             current_header_ptr_i8 = self.builder.gep(current_data_ptr_i8, [header_offset], inbounds=True, name="current_header_ptr")
             
             realloc_func_res = self.env.lookup('realloc')
-            if realloc_func_res is None: return self.report_error("Internal error: C function 'realloc' not found.")
+            if realloc_func_res is None: 
+                return self.report_error("Internal error: C function 'realloc' not found.")
             realloc_func, _ = realloc_func_res
-
             
             new_header_ptr_i8 = self.builder.call(realloc_func, [current_header_ptr_i8, total_new_size_bytes], "new_block_ptr")
-
             
             new_len_ptr = self.builder.bitcast(new_header_ptr_i8, ir.IntType(32).as_pointer(), "new_header_len_ptr")
             self.builder.store(new_size_val, new_len_ptr)
-
+            
             new_data_ptr_i8 = self.builder.gep(new_header_ptr_i8, [header_size_val], inbounds=True, name="new_data_i8_ptr")
             
-            new_typed_data_ptr = self.builder.bitcast(new_data_ptr_i8, current_typed_data_ptr.type, "new_typed_data_ptr")
-
-            self.builder.store(new_typed_data_ptr, variable_storage_ptr)
-            
-            return ir.Constant(ir.IntType(32), 0), ir.IntType(32)
+            new_typed_data_ptr = self.builder.bitcast(new_data_ptr_i8, current_typed_data_ptr.type, "new_typed_data_ptr") # type: ignore
+            if new_typed_data_ptr is None:
+                self.report_error("Internal error: bitcast to typed pointer failed during realloc.")
+                return None
+            return new_typed_data_ptr, new_typed_data_ptr.type
 
 
         vector_struct_type = self.struct_types.get("vector")
@@ -3199,7 +3188,6 @@ class Compiler:
         ret: ir.Value = self.builder.call(func, args)
         
         return ret, ret_type
-    
 
     def visit_as_expression(self, node: "AsExpression") -> Optional[tuple[ir.Value, ir.Type]]:
         var_resolved = self.resolve_value(node.variable)
@@ -3974,15 +3962,11 @@ class Compiler:
         return loaded_value, elem_type
 
     def convert_string(self,string:str)->tuple[ir.GlobalVariable, ir.Type]:
-        # First, handle escaped newlines properly.
         string=string.replace("\\n","\n")
-        # Add a single null terminator.
         fmt_with_null = f"{string}\0"
         
-        # Encode to bytes *before* calculating the length.
         fmt_bytes = bytearray(fmt_with_null.encode("utf8"))
         
-        # Use the correct byte length for the array type definition.
         c_fmt = ir.Constant(ir.ArrayType(ir.IntType(8), len(fmt_bytes)), fmt_bytes)
 
         global_fmt = ir.GlobalVariable(self.module, c_fmt.type, name=f'__str_{self.increment_counter()}')
