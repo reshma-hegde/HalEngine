@@ -399,22 +399,30 @@ class Compiler:
 
 
     def visit_branch_statement(self, node: BranchStatement) -> None:
-       
         current_func = self.builder.function
 
         handle_block = current_func.append_basic_block("handle_block")
         merge_block = current_func.append_basic_block("merge_block")
         self.exception_handler_stack.append(handle_block)
 
-        self.compile(node.try_block)
+        if isinstance(node.try_block, BlockStatement):
+            for stmt in node.try_block.statements:
+               
+                error_val_check = self.builder.load(self.global_error_ptr, "pre_stmt_err_check")
+                null_ptr_check = ir.Constant(error_val_check.type, None)
+                is_error_check = self.builder.icmp_unsigned('!=', error_val_check, null_ptr_check)
+
+                no_error_block = self.builder.append_basic_block("no_error_continue")
+                
+                self.builder.cbranch(is_error_check, handle_block, no_error_block)
+                self.builder.position_at_start(no_error_block)
+
+                self.compile(stmt)
+
+        if self.builder.block is not None and not self.builder.block.is_terminated:
+            self.builder.branch(merge_block)
         
-        if self.builder.block is not None:
-            block = self.builder.block
-            if not block.is_terminated:
-                self.builder.branch(merge_block)
-
         self.builder.position_at_start(handle_block)
-
         self.exception_handler_stack.pop()
 
         if self.global_error_ptr is not None:
@@ -431,10 +439,8 @@ class Compiler:
 
         self.compile(node.handle_block)
       
-        if self.builder.block is not None:
-            block = self.builder.block
-            if not block.is_terminated:
-                self.builder.branch(merge_block)
+        if self.builder.block is not None and not self.builder.block.is_terminated:
+            self.builder.branch(merge_block)
 
         self.builder.position_at_start(merge_block)
 
@@ -459,10 +465,16 @@ class Compiler:
 
             self.builder.store(error_val, self.global_error_ptr)
         
-        handler_block = self.exception_handler_stack[-1]
-        self.builder.branch(handler_block)
+        current_function = self.builder.function
+        return_type = current_function.return_value.type
 
-    
+        if isinstance(return_type, ir.VoidType):
+            self.builder.ret_void()
+        else:
+           
+            dummy_return_val = ir.Constant(return_type, None if isinstance(return_type, ir.PointerType) else 0)
+            self.builder.ret(dummy_return_val)
+
     def visit_fork_statement(self, node: ForkStatement) -> None:
         if not node.branches:
             return 
@@ -3154,7 +3166,24 @@ class Compiler:
                     return None
                 
                 new_func, ret_type = new_func_result
-                return self.builder.call(new_func, arg_vals), ret_type
+                ret = self.builder.call(new_func, arg_vals)
+
+                if self.exception_handler_stack:
+                    error_block = self.builder.append_basic_block("post_call_error")
+                    continue_block = self.builder.append_basic_block("post_call_ok")
+                    
+                    error_val = self.builder.load(self.global_error_ptr, "error_check_val")
+                    null_ptr = ir.Constant(error_val.type, None)
+                    is_error = self.builder.icmp_unsigned('!=', error_val, null_ptr, "is_error")
+                    self.builder.cbranch(is_error, error_block, continue_block)
+
+                    self.builder.position_at_start(error_block)
+                    handler_block = self.exception_handler_stack[-1]
+                    self.builder.branch(handler_block)
+                    
+                    self.builder.position_at_start(continue_block)
+                
+                return ret, ret_type
             self.report_error(f"Function '{name}' not found in environment.")
             return None
         assert result is not None  
@@ -3215,7 +3244,25 @@ class Compiler:
 
 
         ret: ir.Value = self.builder.call(func, args)
-        
+
+        if self.exception_handler_stack:
+           
+            error_block = self.builder.append_basic_block("post_call_error")
+            continue_block = self.builder.append_basic_block("post_call_ok")
+
+            error_val = self.builder.load(self.global_error_ptr, "error_check_val")
+            null_ptr = ir.Constant(error_val.type, None)
+            is_error = self.builder.icmp_unsigned('!=', error_val, null_ptr, "is_error")
+          
+            self.builder.cbranch(is_error, error_block, continue_block)
+
+            self.builder.position_at_start(error_block)
+            handler_block = self.exception_handler_stack[-1]
+            self.builder.branch(handler_block)
+           
+            self.builder.position_at_start(continue_block)
+
+
         return ret, ret_type
 
     def visit_as_expression(self, node: "AsExpression") -> Optional[tuple[ir.Value, ir.Type]]:
@@ -3815,7 +3862,7 @@ class Compiler:
                 format_str = "%d"
             elif isinstance(original_type, ir.FloatType):
                 format_str = "%f"
-                value_to_format = self.builder.fpext(original_val, ir.DoubleType()) # Promote float to double for sprintf
+                value_to_format = self.builder.fpext(original_val, ir.DoubleType()) 
             elif isinstance(original_type, ir.DoubleType):
                 format_str = "%f"
 

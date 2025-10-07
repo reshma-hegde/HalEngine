@@ -1,26 +1,34 @@
-
-fun risky_divide(var a,var b)
+fun safe_divide(var a, var b)
     if b == 0
-        print("Division by zero!");
-        return 0;
+        raise "Cannot divide by zero!";
     fi
     return a / b;
 nuf
 
 fun main()
-    var x = 10;
-    var y = 0;
-    var result = 0;
+    print("Enter numerator: ");
+    var num = input() : float;
+
+    print("Enter denominator: ");
+    var den = input() : float;
+
+    var result = 0.0;
 
     branch
-        result = risky_divide(x, y);
-        pritn("this wont be printed");
+        result = safe_divide(num, den);
+        print("Division successful! Result: ", result);
     handle e
-        print("Error occurred: ", e);
-        result = 0;
+        print("Error: ", e);
+        result = 0.0;
     end
 
-    print("consumed");
-    print("Result: ", result);
+    print("consumes");
+    var int_result = result : int;
+    print("Result cast to int: ", int_result);
+
+    
+    var str_result = result : str;
+    print("Result as string: ", str_result);
+
     return 0;
 nuf
