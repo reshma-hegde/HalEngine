@@ -90,6 +90,30 @@ class Compiler:
 
     def __initialize_builtins(self)->None:
 
+        def __init_atoi()->ir.Function:
+            fnty:ir.FunctionType=ir.FunctionType(
+                ir.IntType(32),
+                [ir.IntType(8).as_pointer()],
+                var_arg=False
+            )
+            return ir.Function(self.module,fnty,'atoi')
+        
+        def __init_atof()->ir.Function:
+            fnty:ir.FunctionType=ir.FunctionType(
+                ir.DoubleType(),
+                [ir.IntType(8).as_pointer()],
+                var_arg=False
+            )
+            return ir.Function(self.module,fnty,'atof')
+        
+        def __init_sprintf()->ir.Function:
+            fnty:ir.FunctionType=ir.FunctionType(
+                ir.IntType(32),
+                [ir.IntType(8).as_pointer(), ir.IntType(8).as_pointer()],
+                var_arg=True
+            )
+            return ir.Function(self.module,fnty,'sprintf')
+
         def __init_fopen()->ir.Function:
             
             fnty:ir.FunctionType=ir.FunctionType(
@@ -226,6 +250,11 @@ class Compiler:
         self.env.define('srand', __init_srand(), ir.VoidType())
         self.env.define('rand', __init_rand(), ir.IntType(32))
 
+
+        self.env.define('atoi', __init_atoi(), ir.IntType(32))
+        self.env.define('atof', __init_atof(), ir.DoubleType())
+        self.env.define('sprintf', __init_sprintf(), ir.IntType(32))
+        
         self.builtin_functions = {}
         self.builtin_functions["len"] = __builtin_len
 
@@ -3710,55 +3739,98 @@ class Compiler:
     
     def visit_cast_expression(self, node: CastExpression) -> Optional[tuple[ir.Value, ir.Type]]:
         target_type_str = node.target_type.value
+        if target_type_str is None:
+            self.report_error("Cast expression is missing a target type.")
+            return None
 
+        
         if node.expression.type() == NodeType.InputExpression:
-            scanf_func_result = self.env.lookup("input")
-            if scanf_func_result is None:
+            scanf_func_res = self.env.lookup("input")
+            if scanf_func_res is None:
                 self.report_error("Built-in function 'scanf' not found.")
                 return None
-            scanf_func, _ = scanf_func_result
+            scanf_func, _ = scanf_func_res
 
             if target_type_str == "int":
                 return self.input_int(scanf_func)
             elif target_type_str in ["float", "double"]:
-                return self.input_float(scanf_func) 
+                return self.input_float(scanf_func)
             elif target_type_str == "str":
                 return self.input_string(scanf_func)
             else:
                 self.report_error(f"Cannot read input directly as type '{target_type_str}'.")
                 return None
 
+        
         val_res = self.resolve_value(node.expression)
         if val_res is None:
             self.report_error("Cannot resolve expression for casting.")
             return None
         
         original_val, original_type = val_res
-        
-        if target_type_str not in self.type_map:
+        target_type = self.type_map.get(target_type_str)
+
+        if target_type is None:
             self.report_error(f"Unknown type '{target_type_str}' for casting.")
             return None
             
-        target_type = self.type_map[target_type_str]
+        
+        is_original_numeric = isinstance(original_type, (ir.IntType, ir.FloatType, ir.DoubleType))
+        is_target_numeric = isinstance(target_type, (ir.IntType, ir.FloatType, ir.DoubleType))
 
-        if isinstance(original_type, ir.IntType) and isinstance(target_type, (ir.FloatType, ir.DoubleType)):
-            cast_val = self.builder.sitofp(original_val, target_type)
-            if cast_val is None:
-                return None
-            return cast_val, target_type
+        if is_original_numeric and is_target_numeric:
+            if isinstance(target_type, ir.IntType):
+                val = cast(ir.Value, self.builder.fptosi(original_val, target_type))
+            else:
+                val = cast(ir.Value, self.builder.sitofp(original_val, target_type))
+            return val, target_type
+                
+        is_original_string = (isinstance(original_type, ir.PointerType) and 
+                              isinstance(original_type.pointee, ir.IntType) and original_type.pointee.width == 8) # type: ignore
+
+        if is_original_string and is_target_numeric:
+            if isinstance(target_type, ir.IntType):
+                atoi_func, _ = self.env.lookup('atoi') # type: ignore
+                return self.builder.call(atoi_func, [original_val]), target_type
+            elif isinstance(target_type, (ir.FloatType, ir.DoubleType)):
+                atof_func, _ = self.env.lookup('atof') # type: ignore
+                double_val = self.builder.call(atof_func, [original_val])
+                if isinstance(target_type, ir.FloatType):
+                    val = cast(ir.Value, self.builder.fptrunc(double_val, target_type))
+                    return val, target_type
+                return double_val, target_type
+
+        
+        if is_original_numeric and target_type_str == 'str':
+            sprintf_func, _ = self.env.lookup('sprintf') # type: ignore
             
-        if isinstance(original_type, (ir.FloatType, ir.DoubleType)) and isinstance(target_type, ir.IntType):
-            cast_val = self.builder.fptosi(original_val, target_type)
-            if cast_val is None:
-                return None
-            return cast_val, target_type
+            
+            buffer = self.builder.alloca(ir.ArrayType(ir.IntType(8), 64), name="num_to_str_buf")
+            buffer_ptr = self.builder.gep(buffer, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)])
+            
+            format_str = ""
+            value_to_format = original_val
+
+            if isinstance(original_type, ir.IntType):
+                format_str = "%d"
+            elif isinstance(original_type, ir.FloatType):
+                format_str = "%f"
+                value_to_format = self.builder.fpext(original_val, ir.DoubleType()) # Promote float to double for sprintf
+            elif isinstance(original_type, ir.DoubleType):
+                format_str = "%f"
+
+            fmt_g, _ = self.convert_string(format_str)
+            fmt_p = self.builder.gep(fmt_g, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)])
+            
+            self.builder.call(sprintf_func, [buffer_ptr, fmt_p, value_to_format])
+            return buffer_ptr, self.type_map['str']
+        
         
         if original_type == target_type:
             return original_val, original_type
 
         self.report_error(f"Unsupported cast from {original_type} to {target_type}.")
         return None
-
 
     def input_int(self, scanf_func):
         format_string = "%d\0"

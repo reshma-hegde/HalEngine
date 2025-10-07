@@ -178,8 +178,7 @@ KEYWORDS: dict[str,TokenType]={
     "pause":TokenType.PAUSE,
     "raise":TokenType.RAISE,
     "as":TokenType.AS,
-    "int":TokenType.INT,
-    "float":TokenType.FLOAT,
+    
     #"file":TokenType.FILE,
     
     
@@ -192,7 +191,7 @@ ALT_KEYWORDS: dict[str,TokenType]={
     "endwhile": TokenType.ELIHW,
 }
 
-TYPE_KEYWORDS:list[str]=["int","float","str","void"]
+TYPE_KEYWORDS:list[str]=["int","float","str","void","double"]
 
 def lookup_ident(ident:str)->TokenType:
     tt:TokenType| None=KEYWORDS.get(ident)

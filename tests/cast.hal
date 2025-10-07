@@ -1,0 +1,45 @@
+fun main()
+    print("Enter an integer: ");
+    var x = input() : int;
+
+    print("Enter a decimal: ");
+    var y = input() : float;
+
+    print("Integer: ", x, "  Float: ", y);
+
+   
+    var sum = (x + y) : int;
+    print("Result after casting to int: ", sum);
+
+    
+    var s = (x + y) : float;
+    print("Result after casting to float: ", s);
+
+    var a = 12 + 13.5;
+    print("Result of 12 + 13.5 (float): ", a);
+
+    var fs = a : str;
+    print("Float to string: ", fs);
+
+    var str_num = "42";
+    var si = str_num : int;
+    print("String to int: ", si);
+
+    var d = x : double;
+    print("Int to double: ", d);
+
+    var di = d : int;
+    print("Double to int: ", di);
+
+    var neg = (-4.9) : int;
+    print("Negative float to int: ", neg);
+
+    var big = 999999999 : double;
+    print("Large int to double: ", big);
+
+    var back = big : int;
+    print("Double to int (large): ", back);
+
+
+    return 0;
+nuf

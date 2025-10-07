@@ -92,7 +92,6 @@ class Parser:
             TokenType.DOUBLE:self.parse_double_literal,
             TokenType.SUPER: self.parse_super_expression,
             TokenType.ARROW:self.parse_gt_ignore,
-            TokenType.COLON:self.parse_cast_expression
             
 
         } 
@@ -117,6 +116,7 @@ class Parser:
             TokenType.AND:self.parse_infix_expression, 
             TokenType.OR:self.parse_infix_expression,
             TokenType.AS: self.parse_as_expression,
+            TokenType.COLON: self.parse_cast_expression,
         }
 
         self.next_token()
@@ -293,16 +293,15 @@ class Parser:
                     
                 return ExpressionStatement(expr=expr)
 
-    # ADD this new method to the Parser class
+    
     def parse_typed_var_statement(self) -> VarStatement | None:
         stmt = VarStatement()
         if self.current_token is None or self.current_token.literal is None:
             self.errors.append("Invalid type in variable declaration.")
             return None
-        # The first token is the type literal (e.g., "file")
         stmt.value_type = self.current_token.literal
 
-        self.next_token() # Move to the identifier
+        self.next_token() 
 
         if self.current_token is None or self.current_token.literal is None:
             self.errors.append("Invalid name in variable declaration.")
@@ -313,31 +312,36 @@ class Parser:
             self.errors.append(f"Expected '=' in declaration of '{stmt.name.value}'")
             return None
 
-        self.next_token() # Move to the expression
+        self.next_token() 
         stmt.value = self.parse_expression(PrecedenceType.P_LOWEST)
 
-        # Declarations should end with a semicolon
         if self.peek_token_is(TokenType.SEMICOLON):
             self.next_token()
         return stmt
 
 
+   
     def parse_cast_expression(self, left: Expression) -> Expression | None:
         self.next_token()
 
-        if not self.current_token_is(TokenType.IDENTIFIER):
-            self.errors.append(f"Expected a type identifier after ':', but got {self.current_token.type if self.current_token else 'None'}")
-            return None
-        
         if self.current_token is None or self.current_token.literal is None:
             self.errors.append("Invalid type identifier for cast.")
             return None
-            
+
+        
+        valid_type_tokens = {
+            TokenType.IDENTIFIER,
+            TokenType.TYPE,       
+        }
+
+        if self.current_token.type not in valid_type_tokens:
+            self.errors.append(f"Expected a type identifier after ':', but got {self.current_token.type.name}")
+            return None
+        
         target_type = IdentifierLiteral(value=self.current_token.literal)
         
         return CastExpression(expression=left, target_type=target_type)
-
-
+    
     def parse_as_expression(self, left: Expression) -> Expression | None:
         self.next_token() 
 
@@ -796,30 +800,14 @@ class Parser:
         if self.peek_token_is(TokenType.EQ):
             self.next_token()
             self.next_token()
-            expr=self.parse_expression(PrecedenceType.P_LOWEST)
-
-            if self.peek_token_is(TokenType.COLON):
-                self.next_token()  
-                self.next_token()  
-
-                if self.current_token is None or not (
-                    self.current_token.type in [TokenType.IDENTIFIER, TokenType.INT, TokenType.FLOAT, TokenType.STRING, TokenType.BOOL_TYPE]
-                ):
-                    raise SyntaxError(
-                        f"Expected type identifier after ':' at line {self.current_token.line_no if self.current_token else -1}"
-                    )
-
-                target_type = IdentifierLiteral(value=self.current_token.literal)
-                expr = CastExpression(expression=expr, target_type=target_type)
-
-            stmt.value = expr
+            stmt.value = self.parse_expression(PrecedenceType.P_LOWEST)
         else:
             stmt.value=None
+            
         if not self.peek_token_is(TokenType.SEMICOLON):
-            raise SyntaxError(f"Expected ; after variable declarationa at line {self.current_token.line_no}")
+            raise SyntaxError(f"Expected ; after variable declaration at line {self.current_token.line_no if self.current_token else -1}")
         self.next_token()
         return stmt
-
 
     def parse_array_declaration(self) -> VarStatement:
         stmt: VarStatement = VarStatement()
@@ -956,8 +944,6 @@ class Parser:
             if stmt is not None:
                 block_stmt.statements.append(stmt)
             
-            # This call ensures the parser always moves to the next token,
-            # preventing an infinite loop if parse_statement() returns None.
             self.next_token()
         
         return block_stmt
@@ -1042,7 +1028,6 @@ class Parser:
 
         self.next_token()
 
-        # Use the corrected block parsing utility for the loop body.
         body = self.parse_block_statement_until([TokenType.ELIHW])
 
         if not self.current_token_is(TokenType.ELIHW):
