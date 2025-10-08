@@ -104,6 +104,8 @@ class TokenType(Enum):
     RAISE="RAISE"
     AS="AS"
     FILE="FILE"
+    TILDE="TILDE" 
+    TIME="TIME"
     
 
     

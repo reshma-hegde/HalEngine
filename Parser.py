@@ -4,7 +4,7 @@ from typing import Callable, Optional, List
 from enum import Enum,auto
 
 from AST import RaiseStatement, Statement,Expression,Program,FunctionStatement,ReturnStatement,BlockStatement,AssignStatement,PostfixExpression,LoadStatement,ArrayLiteral,NullLiteral,StructInstanceExpression,ClassStatement,ThisExpression,ForkStatement,QubitResetStatement,PauseStatement
-from AST import ExpressionStatement, InfixExpression,IntegerLiteral,FloatLiteral,IdentifierLiteral,VarStatement, PrefixExpression, InputExpression,ArrayAccessExpression,StructStatement,StructAccessExpression,MemberStatement,BranchStatement,DoubleLiteral,SuperExpression,AsExpression
+from AST import ExpressionStatement, InfixExpression,IntegerLiteral,FloatLiteral,IdentifierLiteral,VarStatement, PrefixExpression, InputExpression,ArrayAccessExpression,StructStatement,StructAccessExpression,MemberStatement,BranchStatement,DoubleLiteral,SuperExpression,AsExpression, TimeLiteral
 from AST import BooleanLiteral,IfStatement,CallExpression,FunctionParameter,StringLiteral, WhileStatement,BreakStatement,ContinueStatement,ForStatement,ReserveCall,RefExpression,DerefExpression,RewindStatement, FastForwardStatement,MeasureExpression,QubitDeclarationStatement,CastExpression
 
 
@@ -92,6 +92,7 @@ class Parser:
             TokenType.DOUBLE:self.parse_double_literal,
             TokenType.SUPER: self.parse_super_expression,
             TokenType.ARROW:self.parse_gt_ignore,
+            TokenType.TIME: self.parse_time_literal,
             
 
         } 
@@ -314,6 +315,17 @@ class Parser:
 
         self.next_token() 
         stmt.value = self.parse_expression(PrecedenceType.P_LOWEST)
+
+        if self.peek_token_is(TokenType.TILDE):
+            self.next_token() 
+            self.next_token() 
+            if self.current_token and self.current_token.type == TokenType.TIME:
+                time_expr = self.parse_time_literal()
+                if isinstance(time_expr, TimeLiteral):
+                    stmt.lifetime = time_expr
+            else:
+                self.errors.append("Expected a time literal (e.g., 5s) after '~'.")
+        
 
         if self.peek_token_is(TokenType.SEMICOLON):
             self.next_token()
@@ -803,12 +815,48 @@ class Parser:
             stmt.value = self.parse_expression(PrecedenceType.P_LOWEST)
         else:
             stmt.value=None
+
+        if self.peek_token_is(TokenType.TILDE):
+            self.next_token() 
+            self.next_token()  
+            if self.current_token and self.current_token.type == TokenType.TIME:
+                time_expr = self.parse_time_literal()
+                if isinstance(time_expr, TimeLiteral):
+                    stmt.lifetime = time_expr
+            else:
+                self.errors.append("Expected a time literal (e.g., 5s) after '~'.")
+        
             
         if not self.peek_token_is(TokenType.SEMICOLON):
             raise SyntaxError(f"Expected ; after variable declaration at line {self.current_token.line_no if self.current_token else -1}")
         self.next_token()
         return stmt
+    def parse_time_literal(self) -> Expression:
+        if self.current_token is None:
+            self.errors.append("Current token is None while parsing time literal.")
+            return NullLiteral()
 
+        literal = self.current_token.literal
+        value_str = ""
+        unit_str = ""
+        
+        for i, char in enumerate(literal):
+            if not char.isdigit() and char != '.':
+                value_str = literal[:i]
+                unit_str = literal[i:]
+                break
+        
+        if not unit_str:
+            self.errors.append(f"Invalid time literal: no unit found in '{literal}'")
+            return NullLiteral()
+            
+        try:
+            value = float(value_str)
+            return TimeLiteral(value=value, unit=unit_str)
+        except ValueError:
+            self.errors.append(f"Invalid numeric value in time literal: '{value_str}'")
+            return NullLiteral()
+        
     def parse_array_declaration(self) -> VarStatement:
         stmt: VarStatement = VarStatement()
         if self.current_token is None:

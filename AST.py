@@ -53,7 +53,7 @@ class NodeType(Enum):
     RaiseStatement = "RaiseStatement"
     AsExpression = "AsExpression"
     CastExpression="CastExpression"
-
+    TimeLiteral = "TimeLiteral"
     
 
 
@@ -373,25 +373,39 @@ class InputExpression(Expression):
             "type": self.type().value,
             "value": self.value
         }
+class TimeLiteral(Expression):
+    def __init__(self, value: float, unit: str) -> None:
+        self.value = value
+        self.unit = unit
 
+    def type(self) -> NodeType:
+        return NodeType.TimeLiteral
+
+    def json(self) -> dict:
+        return {
+            "type": self.type().value,
+            "value": self.value,
+            "unit": self.unit
+        }
 
 class VarStatement(Statement):
-    def __init__(self,name:Optional[Expression]=None,value:Optional[Expression]=None,value_type:Optional[str]=None)->None:
-        self.name=name
-        self.value=value
-        self.value_type=value_type
-    
-    def type(self)->NodeType:
+    def __init__(self, name: Optional[Expression] = None, value: Optional[Expression] = None, value_type: Optional[str] = None, lifetime: Optional[TimeLiteral] = None) -> None:
+        self.name = name
+        self.value = value
+        self.value_type = value_type
+        self.lifetime = lifetime 
+
+    def type(self) -> NodeType:
         return NodeType.VarStatement
-    
-    def json(self)->dict:
+
+    def json(self) -> dict:
         return {
-            "type" : self.type().value,
-            "name":self.name.json() if  isinstance(self.name, Expression) else None,
-            "value":self.value.json() if self.value else None,
-            "value_type":self.value_type
-        }
-    
+            "type": self.type().value,
+            "name": self.name.json() if isinstance(self.name, Expression) else None,
+            "value": self.value.json() if self.value else None,
+            "value_type": self.value_type,
+            "lifetime": self.lifetime.json() if self.lifetime else None 
+        }   
 
 class ThisExpression(Expression):
     def type(self) -> NodeType:

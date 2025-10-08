@@ -4,7 +4,7 @@ import random
 from llvmlite import ir
 import os
 from AST import DoubleLiteral, Node,NodeType,Program, RaiseStatement,Statement,Expression, VarStatement,IdentifierLiteral,ReturnStatement,AssignStatement,CallExpression,InputExpression,NullLiteral, ClassStatement,ThisExpression,BranchStatement,ForkStatement,QubitDeclarationStatement,MeasureExpression
-from AST import ExpressionStatement,InfixExpression,IntegerLiteral,FloatLiteral, BlockStatement,FunctionStatement,IfStatement,BooleanLiteral,ArrayLiteral,RefExpression,DerefExpression,ReserveCall,RewindStatement, FastForwardStatement,SuperExpression,AsExpression
+from AST import ExpressionStatement,InfixExpression,IntegerLiteral,FloatLiteral, BlockStatement,FunctionStatement,IfStatement,BooleanLiteral,ArrayLiteral,RefExpression,DerefExpression,ReserveCall,RewindStatement, FastForwardStatement,SuperExpression,AsExpression,TimeLiteral
 from AST import FunctionParameter,StringLiteral,WhileStatement,BreakStatement,ContinueStatement,PrefixExpression,PostfixExpression,LoadStatement,ArrayAccessExpression, StructInstanceExpression,StructAccessExpression,StructStatement,QubitResetStatement,CastExpression
 from typing import List, cast
 from Environment import Environment
@@ -51,7 +51,8 @@ class Compiler:
         )
         self.struct_types["vector"] = vector_type
         self.struct_layouts["vector"] = {"data": 0, "size": 1}
-
+        self.variable_lifetimes: dict[str, tuple[ir.Value, ir.Value]] = {}
+        
         self.counter:int=0
         self.generic_functions: dict[str, FunctionStatement] = {}
 
@@ -244,6 +245,14 @@ class Compiler:
             
             fnty = ir.FunctionType(ir.IntType(32), [])
             return ir.Function(self.module, fnty, 'rand')
+        
+        def __init_sleep()->ir.Function:
+            fnty = ir.FunctionType(ir.VoidType(), [ir.IntType(32)])
+            return ir.Function(self.module, fnty, 'Sleep')
+
+        
+        
+        self.env.define('sleep', __init_sleep(), ir.IntType(32))
 
         
         self.env.define('time', __init_time(), ir.IntType(32))
@@ -609,6 +618,25 @@ class Compiler:
         ptr = self.builder.alloca(ir_type, name=name)
         self.builder.store(value_ir, ptr)
         self.env.define(name, ptr, ir_type)
+
+        if node.lifetime:
+            lifetime_resolved = self.resolve_value(node.lifetime)
+            if lifetime_resolved:
+                lifetime_duration_val, _ = lifetime_resolved
+                
+                time_func_res = self.env.lookup('time')
+                if time_func_res:
+                    time_func, _ = time_func_res
+                    null_ptr = ir.Constant(ir.IntType(32).as_pointer(), None)
+                    creation_time_val = self.builder.call(time_func, [null_ptr], f"{name}_creation_time")
+                    
+                    creation_time_ptr = self.builder.alloca(ir.IntType(32), name=f"{name}_creation_time_ptr")
+                    self.builder.store(creation_time_val, creation_time_ptr)
+                    
+                    self.variable_lifetimes[name] = (creation_time_ptr, lifetime_duration_val)
+                else:
+                    self.report_error("time() function not available for variable lifetime tracking.")
+        
         if self.is_in_main:
            
             history_type = ir.ArrayType(ir_type, self.HISTORY_CAPACITY)
@@ -2293,6 +2321,57 @@ class Compiler:
             return None
         name: str = node.function.value
 
+        if name == 'sleep':
+            if len(params) != 1:
+                return self.report_error("sleep() requires exactly one time duration argument.")
+
+            
+            sleep_func_res = self.env.lookup("sleep")
+            if sleep_func_res is None:
+                return self.report_error("Internal error: 'sleep' (Sleep) function not found.")
+            sleep_func, ret_type = sleep_func_res
+
+            arg_expr = params[0]
+            milliseconds_val = None
+
+            
+            if isinstance(arg_expr, TimeLiteral):
+                time_node = cast(TimeLiteral, arg_expr)
+                value = float(time_node.value)
+                unit = time_node.unit.lower()
+                
+                milliseconds = 0.0
+                if unit == 's':
+                    milliseconds = value * 1000
+                elif unit == 'm':
+                    milliseconds = value * 60 * 1000
+                elif unit == 'h':
+                    milliseconds = value * 3600 * 1000
+                else:
+                    self.report_error(f"Unknown time unit for sleep: '{time_node.unit}'")
+                    return None
+                
+                milliseconds_val = ir.Constant(ir.IntType(32), int(milliseconds))
+            
+            else:
+                arg_resolved = self.resolve_value(arg_expr)
+                if arg_resolved is None:
+                    return self.report_error("Could not resolve sleep argument.")
+                arg_val, arg_type = arg_resolved
+
+                
+                if isinstance(arg_type, ir.IntType):
+                    milliseconds_val = self.builder.mul(arg_val, ir.Constant(ir.IntType(32), 1000))
+                elif isinstance(arg_type, (ir.FloatType, ir.DoubleType)):
+                    ms_float = self.builder.fmul(arg_val, ir.Constant(arg_type, 1000.0))
+                    milliseconds_val = self.builder.fptosi(ms_float, ir.IntType(32))
+                else:
+                    self.report_error("sleep() argument must be a numeric type.")
+                    return None
+
+            ret = self.builder.call(sleep_func, [milliseconds_val])
+            return ret, ret_type
+
         if name == "reserve":
             if len(params) != 1:
                 return self.report_error("reserve() requires exactly 1 size argument.")
@@ -2970,79 +3049,86 @@ class Compiler:
 
                 if is_dynamic_array:
                     data_ptr = val
-                    element_type = val_type.pointee # type: ignore
-
-                    data_ptr_as_i8 = self.builder.bitcast(data_ptr, ir.IntType(8).as_pointer())
-                    header_offset = ir.Constant(ir.IntType(32), -4)
-                    len_header_ptr_i8 = self.builder.gep(data_ptr_as_i8, [header_offset], inbounds=True)
-                    len_ptr = self.builder.bitcast(len_header_ptr_i8, ir.IntType(32).as_pointer())
-                    array_len = self.builder.load(len_ptr, "dyn_array_len")
-
-                    open_bracket_fmt, _ = self.convert_string("[")
-                    open_bracket_ptr = self.builder.gep(open_bracket_fmt, [zero, zero], inbounds=True)
-                    self.builder.call(printf_func, [open_bracket_ptr])
-
-                    loop_entry = self.builder.append_basic_block("dyn_array_print_entry")
-                    loop_body = self.builder.append_basic_block("dyn_array_print_body")
-                    loop_exit = self.builder.append_basic_block("dyn_array_print_exit")
-
-                    counter_ptr = self.builder.alloca(ir.IntType(32), name='i_dyn_array_print')
-                    self.builder.store(ir.Constant(ir.IntType(32), 0), counter_ptr)
-                    self.builder.branch(loop_entry)
-
-                    self.builder.position_at_start(loop_entry)
-                    i = self.builder.load(counter_ptr)
-                    cond = self.builder.icmp_signed('<', i, array_len)
-                    self.builder.cbranch(cond, loop_body, loop_exit)
-
-                    self.builder.position_at_start(loop_body)
-                    is_not_first = self.builder.icmp_signed('!=', i, ir.Constant(ir.IntType(32), 0))
-                    with self.builder.if_then(is_not_first):
-                        separator_fmt, _ = self.convert_string(", ")
-                        separator_ptr = self.builder.gep(separator_fmt, [zero, zero], inbounds=True)
-                        self.builder.call(printf_func, [separator_ptr])
                     
-                    element_ptr_gep = self.builder.gep(data_ptr, [i], inbounds=True)
-                    element_val = self.builder.load(element_ptr_gep)
+                    
+                    null_ptr_const = ir.Constant(data_ptr.type, None)# type: ignore
+                    is_not_null = self.builder.icmp_signed('!=', data_ptr, null_ptr_const, "is_not_null")
 
-                    
-                    elem_format_str = ""
-                    arg_to_pass = element_val
-                    
-                    if isinstance(element_type, ir.IntType) and element_type.width == 32:
-                        elem_format_str = "%d"
-                    elif isinstance(element_type, ir.DoubleType):
-                        elem_format_str = "%f"
-                    elif isinstance(element_type, ir.FloatType):
-                        elem_format_str = "%f"
-                        
-                        arg_to_pass = self.builder.fpext(element_val, ir.DoubleType())
-                    elif isinstance(element_type, ir.IntType) and element_type.width == 1:
-                        elem_format_str = "%s"
-                        true_ptr = self.builder.gep(self.true_str, [zero, zero], inbounds=True)
-                        false_ptr = self.builder.gep(self.false_str, [zero, zero], inbounds=True)
-                        arg_to_pass = self.builder.select(element_val, true_ptr, false_ptr)
-                    elif isinstance(element_type, ir.PointerType) and isinstance(element_type.pointee, ir.IntType) and element_type.pointee.width == 8: # type: ignore
-                        
-                        elem_format_str = "\"%s\""
-                    
-                    if elem_format_str:
-                        fmt_g, _ = self.convert_string(elem_format_str)
-                        fmt_p = self.builder.gep(fmt_g, [zero, zero], inbounds=True)
-                        self.builder.call(printf_func, [fmt_p, arg_to_pass])
-                    else:
-                        self.report_error(f"Printing array with element type {element_type} is not supported.")
-                    
-                    next_i = self.builder.add(i, ir.Constant(ir.IntType(32), 1))
-                    self.builder.store(next_i, counter_ptr)
-                    self.builder.branch(loop_entry)
+                    with self.builder.if_else(is_not_null) as (then_block, else_block):
+                        with then_block:
+                            
+                            element_type = val_type.pointee # type: ignore
+                            data_ptr_as_i8 = self.builder.bitcast(data_ptr, ir.IntType(8).as_pointer())
+                            header_offset = ir.Constant(ir.IntType(32), -4)
+                            len_header_ptr_i8 = self.builder.gep(data_ptr_as_i8, [header_offset], inbounds=True)
+                            len_ptr = self.builder.bitcast(len_header_ptr_i8, ir.IntType(32).as_pointer())
+                            array_len = self.builder.load(len_ptr, "dyn_array_len")
 
-                    self.builder.position_at_start(loop_exit)
-                    close_bracket_fmt, _ = self.convert_string("]")
-                    close_bracket_ptr = self.builder.gep(close_bracket_fmt, [zero, zero], inbounds=True)
-                    self.builder.call(printf_func, [close_bracket_ptr])
+                            open_bracket_fmt, _ = self.convert_string("[")
+                            open_bracket_ptr = self.builder.gep(open_bracket_fmt, [zero, zero], inbounds=True)
+                            self.builder.call(printf_func, [open_bracket_ptr])
+
+                            loop_entry = self.builder.append_basic_block("dyn_array_print_entry")
+                            loop_body = self.builder.append_basic_block("dyn_array_print_body")
+                            loop_exit = self.builder.append_basic_block("dyn_array_print_exit")
+
+                            counter_ptr = self.builder.alloca(ir.IntType(32), name='i_dyn_array_print')
+                            self.builder.store(ir.Constant(ir.IntType(32), 0), counter_ptr)
+                            self.builder.branch(loop_entry)
+
+                            self.builder.position_at_start(loop_entry)
+                            i = self.builder.load(counter_ptr)
+                            cond = self.builder.icmp_signed('<', i, array_len)
+                            self.builder.cbranch(cond, loop_body, loop_exit)
+
+                            self.builder.position_at_start(loop_body)
+                            is_not_first = self.builder.icmp_signed('!=', i, ir.Constant(ir.IntType(32), 0))
+                            with self.builder.if_then(is_not_first):
+                                separator_fmt, _ = self.convert_string(", ")
+                                separator_ptr = self.builder.gep(separator_fmt, [zero, zero], inbounds=True)
+                                self.builder.call(printf_func, [separator_ptr])
+                            
+                            element_ptr_gep = self.builder.gep(data_ptr, [i], inbounds=True)
+                            element_val = self.builder.load(element_ptr_gep)
+
+                            elem_format_str = ""
+                            arg_to_pass = element_val
+                            
+                            if isinstance(element_type, ir.IntType) and element_type.width == 32:
+                                elem_format_str = "%d"
+                            elif isinstance(element_type, ir.DoubleType):
+                                elem_format_str = "%f"
+                            elif isinstance(element_type, ir.FloatType):
+                                elem_format_str = "%f"
+                                arg_to_pass = self.builder.fpext(element_val, ir.DoubleType())
+                            elif isinstance(element_type, ir.IntType) and element_type.width == 1:
+                                elem_format_str = "%s"
+                                true_ptr = self.builder.gep(self.true_str, [zero, zero], inbounds=True)
+                                false_ptr = self.builder.gep(self.false_str, [zero, zero], inbounds=True)
+                                arg_to_pass = self.builder.select(element_val, true_ptr, false_ptr)
+                            elif isinstance(element_type, ir.PointerType) and \
+                                isinstance(element_type.pointee, ir.IntType) and element_type.pointee.width == 8: # type: ignore
+                                elem_format_str = "%s"
+                            if elem_format_str:
+                                fmt_g, _ = self.convert_string(elem_format_str)
+                                fmt_p = self.builder.gep(fmt_g, [zero, zero], inbounds=True)
+                                self.builder.call(printf_func, [fmt_p, arg_to_pass])
+                            
+                            next_i = self.builder.add(i, ir.Constant(ir.IntType(32), 1))
+                            self.builder.store(next_i, counter_ptr)
+                            self.builder.branch(loop_entry)
+
+                            self.builder.position_at_start(loop_exit)
+                            close_bracket_fmt, _ = self.convert_string("]")
+                            close_bracket_ptr = self.builder.gep(close_bracket_fmt, [zero, zero], inbounds=True)
+                            self.builder.call(printf_func, [close_bracket_ptr])
+
+                        with else_block:
+                            null_str_fmt, _ = self.convert_string("null")
+                            null_str_ptr = self.builder.gep(null_str_fmt, [zero, zero], inbounds=True)
+                            self.builder.call(printf_func, [null_str_ptr])
+                    
                     continue
-
                 
                 format_str = ""
                 arg_to_pass = val
@@ -3602,6 +3688,23 @@ class Compiler:
                     return None
                 return result[0], result[1]
             
+            case NodeType.TimeLiteral:
+                time_node = cast(TimeLiteral, node)
+                value = time_node.value
+                unit = time_node.unit.lower()
+                seconds = 0
+                if unit == 's':
+                    seconds = int(value)
+                elif unit == 'm':
+                    seconds = int(value * 60)
+                elif unit == 'h':
+                    seconds = int(value * 3600)
+                else:
+                    self.report_error(f"Unknown time unit: '{time_node.unit}'")
+                    return None
+                return ir.Constant(ir.IntType(32), seconds), ir.IntType(32)
+
+            
             case NodeType.IntegerLiteral:
                 int_node = cast(IntegerLiteral, node)
                 value = int_node.value
@@ -3652,7 +3755,7 @@ class Compiler:
                 ident_node = cast(IdentifierLiteral, node)
                 if ident_node.value is None:
                     raise ValueError("IdentifierLiteral must have a non-null name")
-
+                name = ident_node.value 
                 result = self.env.lookup(ident_node.value)
                 if result is None:
                     this_entry = self.env.lookup("this")
@@ -3684,6 +3787,28 @@ class Compiler:
                     return ptr, typ
 
                 loaded = self.builder.load(ptr, name=f"{ident_node.value}_load")
+                if name in self.variable_lifetimes:
+                    creation_time_ptr, lifetime_duration = self.variable_lifetimes[name]
+
+                    time_func_res = self.env.lookup('time')
+                    if not time_func_res:
+                        self.report_error("time() function not available for variable lifetime check.")
+                        return loaded, loaded.type 
+
+                    time_func, _ = time_func_res
+                    null_ptr = ir.Constant(ir.IntType(32).as_pointer(), None)
+                    current_time = self.builder.call(time_func, [null_ptr], "current_time_check")
+                    
+                    creation_time = self.builder.load(creation_time_ptr)
+                    elapsed_time = self.builder.sub(current_time, creation_time, "elapsed")
+                    
+                    is_expired = self.builder.icmp_signed('>', elapsed_time, lifetime_duration, "is_expired")
+
+                    null_for_type = ir.Constant(loaded.type, None if isinstance(loaded.type, ir.PointerType) else 0)
+                    
+                    final_val = self.builder.select(is_expired, null_for_type, loaded, name=f"{name}_lifetime_select")
+                    return final_val, loaded.type
+
                 return loaded, loaded.type
             
             case NodeType.BooleanLiteral:

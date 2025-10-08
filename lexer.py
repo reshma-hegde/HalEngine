@@ -56,6 +56,20 @@ class Lexer:
             output += self.current_char
             self.__read_char()
 
+        if self.current_char is not None and self.__is_letter(self.current_char):
+            unit_start_pos = self.position
+            while self.current_char is not None and self.__is_letter(self.current_char):
+                self.__read_char()
+            unit_part = self.source[unit_start_pos:self.position]
+
+            valid_units = {"s", "ms", "us", "ns", "m", "h"}
+            if unit_part in valid_units:
+                return Token(TokenType.TIME, output + unit_part, self.line_no, start_pos)
+            else:
+                self.read_position = unit_start_pos
+                self.position = self.read_position - 1
+                self.__read_char() 
+
        
         if self.current_char == 'd':
             self.__read_char() 
@@ -134,7 +148,9 @@ class Lexer:
                     tok=self.__new_token(TokenType.DIV_EQ, ch+self.current_char)
                 else:
                     tok = Token(TokenType.SLASH, self.current_char, self.line_no, self.position)
-            
+            case '~':
+                tok = self.__new_token(TokenType.TILDE, self.current_char)
+
             case '%':
                 tok = Token(TokenType.MODULUS, self.current_char, self.line_no, self.position)
             case '^':
