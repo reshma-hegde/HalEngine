@@ -1,0 +1,11 @@
+fun load_data()
+    return [1, 2, 3];
+nuf
+
+fun main()
+    var cache = load_data() ~5s;
+    print("cache data : ",cache);
+    sleep(6s);
+    print("cache data : ",cache);  
+    return 0;
+nuf
