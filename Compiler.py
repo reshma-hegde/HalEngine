@@ -2415,14 +2415,25 @@ class Compiler:
                 return None
 
             
-            array_ptr_resolved = self.resolve_value(params[0])
-            if array_ptr_resolved is None:
-                self.report_error("Could not resolve array pointer for realloc().")
+            if not isinstance(params[0], IdentifierLiteral):
+                self.report_error("The first argument to realloc must be a variable.")
                 return None
-            current_typed_data_ptr, var_type = array_ptr_resolved
+
+            array_var_name = cast(IdentifierLiteral, params[0]).value
+            if array_var_name is None:
+                self.report_error("realloc target variable has no name.")
+                return None
+
+            var_entry = self.env.lookup(array_var_name)
+            if var_entry is None:
+                self.report_error(f"Cannot realloc unknown array variable '{array_var_name}'.")
+                return None
+
+            storage_ptr, _ = var_entry 
+            current_typed_data_ptr = self.builder.load(storage_ptr)
             
-            if not isinstance(var_type, ir.PointerType):
-                return self.report_error(f"Cannot realloc a non-pointer type: '{var_type}'.")
+            if not isinstance(current_typed_data_ptr.type, ir.PointerType):
+                return self.report_error(f"Cannot realloc a non-pointer type: '{current_typed_data_ptr.type}'.")
 
             
             new_size_resolved = self.resolve_value(params[1])
@@ -2431,8 +2442,9 @@ class Compiler:
             new_size_val, _ = new_size_resolved
 
             
-            element_type = var_type.pointee # type: ignore
             
+            element_type = current_typed_data_ptr.type.pointee # type: ignore
+           
             if isinstance(element_type, ir.IntType): element_size_bytes = element_type.width // 8
             elif isinstance(element_type, ir.FloatType): element_size_bytes = 4
             elif isinstance(element_type, ir.DoubleType): element_size_bytes = 8
@@ -2464,8 +2476,8 @@ class Compiler:
             if new_typed_data_ptr is None:
                 self.report_error("Internal error: bitcast to typed pointer failed during realloc.")
                 return None
+            self.builder.store(new_typed_data_ptr, storage_ptr)
             return new_typed_data_ptr, new_typed_data_ptr.type
-
 
         vector_struct_type = self.struct_types.get("vector")
         zero = ir.Constant(ir.IntType(32), 0)

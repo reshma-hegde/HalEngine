@@ -3,26 +3,20 @@ fun pop(array a)
 
     if length == 0
         print("Error: cannot pop from empty array");
-        return -1;
+        return a;
     fi
-
-    var last_index = length - 1;
-    var last_value = a[last_index];
-
-    
+ 
     a = realloc(a, length - 1);
 
-    return last_value;
+    return a;
 nuf
 
 
 fun push(array a, var value)
     var length = len(a);
-
-    
+ 
     a = realloc(a, length + 1);
-
-    
+ 
     a[length] = value;
 
     return a; 

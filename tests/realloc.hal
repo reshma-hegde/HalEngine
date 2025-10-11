@@ -12,6 +12,7 @@ fun insert(array arr, var pos, var value)
 
    
     arr[pos] = value;
+    return arr;
 nuf
 
 fun main()
@@ -21,9 +22,9 @@ fun main()
     print(nums);
 
    
-    insert(nums, 1, 15);  
-    insert(nums, 4, 35);  
-    insert(nums, 0, 5);   
+    nums=insert(nums, 1, 15);  
+    nums=insert(nums, 4, 35);  
+    nums=insert(nums, 0, 5);   
 
     print("after multiple insertions");
     print(nums);

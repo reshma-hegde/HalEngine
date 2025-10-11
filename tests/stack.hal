@@ -1,10 +1,11 @@
 load "stack";
-
 fun main()
     array nums = [10, 20, 30, 40, 50];
 
-    var removed = pop(nums);
+    var removed = nums[len(nums) - 1];
     print("removed element: ", removed);
+
+    nums = pop(nums); 
     print(nums);
 
     nums = push(nums, 99);
