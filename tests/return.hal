@@ -11,7 +11,7 @@ fun getDouble()
 nuf
 
 fun getBoolean()
-    return 1;   
+    return True;   
 nuf
 
 fun getString()
