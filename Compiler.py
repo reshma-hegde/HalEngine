@@ -81,12 +81,12 @@ class Compiler:
         self.continues:list[ir.Block]=[]
         self.global_parsed_pallets:dict[str,Program]={}
 
-        self.history_vars: dict[str, tuple[ir.Value, ir.Type]] = {}
+        self.history_vars: dict[str, tuple[ir.Value, ir.Type, ir.Value, ir.Value]] = {}
         self.history_idx_ptr: ir.Value | None = None
         self.history_len_ptr: ir.Value | None = None
         self.is_in_main: bool = False
         self.HISTORY_CAPACITY: int = 1024
-        
+
         
 
     def __initialize_builtins(self)->None:
@@ -638,13 +638,16 @@ class Compiler:
                     self.report_error("time() function not available for variable lifetime tracking.")
         
         if self.is_in_main:
-           
             history_type = ir.ArrayType(ir_type, self.HISTORY_CAPACITY)
             history_ptr = self.builder.alloca(history_type, name=f"{name}_history")
-            self.history_vars[name] = (history_ptr, ir_type)
+            
+            self.history_vars[name] = (history_ptr, ir_type, ir.Constant(ir.IntType(32),0), ir.Constant(ir.IntType(32),0))
 
-            self._emit_save_state()   
-
+            initial_state_idx = ir.Constant(ir.IntType(32), 0)
+            target_slot_ptr = self.builder.gep(history_ptr, 
+                                               [initial_state_idx, initial_state_idx], 
+                                               inbounds=True, name=f"{name}_initial_history_slot")
+            self.builder.store(value_ir, target_slot_ptr)
 
 
     def visit_block_statement(self,node:BlockStatement)->None:
@@ -793,6 +796,7 @@ class Compiler:
         previous_env = self.env
         self.env = function_env
 
+       
         if name == "main":
             self.is_in_main = True
             time_func_res = self.env.lookup('time')
@@ -804,10 +808,12 @@ class Compiler:
                 time_val = self.builder.call(time_func, [null_ptr], 'time_seed')
                 self.builder.call(srand_func, [time_val])
             self.history_vars = {}
-            self.history_idx_ptr = self.builder.alloca(ir.IntType(32), name="history_idx")
-            self.history_len_ptr = self.builder.alloca(ir.IntType(32), name="history_len")
-            self.builder.store(ir.Constant(ir.IntType(32), -1), self.history_idx_ptr)
-            self.builder.store(ir.Constant(ir.IntType(32), 0), self.history_len_ptr)
+            
+            self.history_len_ptr = self.builder.alloca(ir.IntType(32), name="global_history_len")
+            self.builder.store(ir.Constant(ir.IntType(32), 1), self.history_len_ptr) 
+            
+            self.history_idx_ptr = self.builder.alloca(ir.IntType(32), name="global_history_idx")
+            self.builder.store(ir.Constant(ir.IntType(32), 0), self.history_idx_ptr) 
 
         for i, param_name in enumerate(param_names):
             if isinstance(param_types[i], ir.PointerType) and isinstance(param_types[i].pointee, ir.ArrayType): # type: ignore
@@ -828,6 +834,8 @@ class Compiler:
 
         self.builder = previous_builder
         self.env=previous_env
+
+   
 
     def visit_assign_statement(self, node: AssignStatement) -> None:
         if isinstance(node.ident, IdentifierLiteral):
@@ -939,9 +947,23 @@ class Compiler:
                     self.errors.append(f"COMPILE ERROR: Unsupported assignment operator '{operator}'")
                     return
 
-            self.builder.store(value, ptr)
-            if self.is_in_main:
-                self._emit_save_state()
+            
+            is_different = None
+            if isinstance(var_type, ir.IntType):
+                is_different = self.builder.icmp_signed('!=', orig_val, value, "is_val_different")
+            elif isinstance(var_type, (ir.FloatType, ir.DoubleType)):
+                is_different = self.builder.fcmp_ordered('!=', orig_val, value, "is_val_different")
+            
+        
+            if is_different is not None:
+                with self.builder.if_then(is_different):
+                    self.builder.store(value, ptr)
+                    if self.is_in_main and name in self.history_vars:
+                        self._emit_save_state()
+            else: 
+                self.builder.store(value, ptr)
+                if self.is_in_main and name in self.history_vars:
+                    self._emit_save_state()
 
         elif isinstance(node.ident, StructAccessExpression):
             
@@ -1066,39 +1088,38 @@ class Compiler:
 
             self.builder.store(right_value, elem_ptr)
             if self.is_in_main:
-                self._emit_save_state()
+                
+                pass
 
         else:
             self.errors.append(
                 "COMPILE ERROR: Left-hand side of assignment must be an identifier or array element"
             )
             return
-    
-
-    def _emit_save_state(self):
         
-        if not self.is_in_main or not self.history_idx_ptr or not self.history_len_ptr:
+    def _emit_save_state(self):
+        if not self.is_in_main or not self.history_len_ptr or not self.history_idx_ptr:
             return
 
-        current_idx_val = self.builder.load(self.history_idx_ptr, name="current_idx")
-        next_idx_val = self.builder.add(current_idx_val, ir.Constant(ir.IntType(32), 1), name="next_idx")
+        
+        current_len = self.builder.load(self.history_len_ptr, name="current_history_len")
 
-        for name, (history_ptr, _) in self.history_vars.items():
+        for name, (history_ptr, _, _, _) in self.history_vars.items():
             var_entry = self.env.lookup(name)
             if var_entry:
                 var_ptr, _ = var_entry
                 current_val = self.builder.load(var_ptr)
                 
                 target_slot_ptr = self.builder.gep(history_ptr, 
-                                                [ir.Constant(ir.IntType(32), 0), next_idx_val], 
-                                                inbounds=True, name=f"{name}_history_slot")
+                                                [ir.Constant(ir.IntType(32), 0), current_len], 
+                                                inbounds=True, name=f"{name}_history_slot_save")
                 self.builder.store(current_val, target_slot_ptr)
 
-      
-        self.builder.store(next_idx_val, self.history_idx_ptr)
-        new_len_val = self.builder.add(next_idx_val, ir.Constant(ir.IntType(32), 1), name="new_history_len")
-        self.builder.store(new_len_val, self.history_len_ptr)
+        
+        new_len = self.builder.add(current_len, ir.Constant(ir.IntType(32), 1), name="new_global_len")
+        self.builder.store(new_len, self.history_len_ptr)
 
+        self.builder.store(current_len, self.history_idx_ptr)
 
     def _emit_restore_state(self, target_idx_val: ir.Value):
        
@@ -1106,7 +1127,7 @@ class Compiler:
             return
 
 
-        for name, (history_ptr, _) in self.history_vars.items():
+        for name, (history_ptr, _,_,_) in self.history_vars.items():
             var_entry = self.env.lookup(name)
             if var_entry:
                 var_ptr, _ = var_entry
@@ -2478,6 +2499,92 @@ class Compiler:
                 return None
             self.builder.store(new_typed_data_ptr, storage_ptr)
             return new_typed_data_ptr, new_typed_data_ptr.type
+
+        if name == "history":
+            if not self.is_in_main:
+                return self.report_error("history() can only be used inside the 'main' function.")
+            if len(params) != 1:
+                return self.report_error("history() requires exactly one variable argument.")
+            
+            arg_node = params[0]
+            if not isinstance(arg_node, IdentifierLiteral) or arg_node.value is None:
+                return self.report_error("history() argument must be a variable name.")
+
+            var_name = arg_node.value
+            history_info = self.history_vars.get(var_name)
+            if history_info is None:
+                return self.report_error(f"Variable '{var_name}' is not being tracked for history.")
+
+            source_history_ptr, element_type, _, _ = history_info
+            
+            if not self.history_len_ptr:
+                return self.report_error("Internal error: history length pointer is not initialized.")
+            
+            current_history_len = self.builder.load(self.history_len_ptr, "current_history_len")
+            
+           
+            if isinstance(element_type, ir.IntType):
+                element_size_in_bytes = element_type.width // 8
+            elif isinstance(element_type, ir.FloatType):
+                element_size_in_bytes = 4
+            elif isinstance(element_type, ir.DoubleType):
+                element_size_in_bytes = 8
+            else:
+                element_size_in_bytes = 8
+
+            
+            element_size_val = ir.Constant(ir.IntType(32), element_size_in_bytes)
+            data_size = self.builder.mul(current_history_len, element_size_val, name="history_data_size")
+            header_size = ir.Constant(ir.IntType(32), 4)
+            total_size = self.builder.add(header_size, data_size, name="history_total_size")
+
+            malloc_func_result = self.env.lookup("reserve")
+            if malloc_func_result is None:
+                return self.report_error("Built-in function 'reserve' (malloc) not found.")
+            malloc_func, _ = malloc_func_result
+            raw_ptr = self.builder.call(malloc_func, [total_size], name="raw_history_array_ptr")
+
+            len_ptr_header = self.builder.bitcast(raw_ptr, ir.IntType(32).as_pointer(), name="history_len_header_ptr")
+            self.builder.store(current_history_len, len_ptr_header)
+
+            data_ptr_i8 = self.builder.gep(raw_ptr, [header_size], inbounds=True, name="history_data_i8_ptr")
+            dest_data_ptr = self.builder.bitcast(data_ptr_i8, ir.PointerType(element_type), name="typed_history_data_ptr")
+
+            
+            loop_cond = self.builder.append_basic_block('history_loop_cond')
+            loop_body = self.builder.append_basic_block('history_loop_body')
+            loop_exit = self.builder.append_basic_block('history_loop_exit')
+            
+            counter_ptr = self.builder.alloca(ir.IntType(32), name='i_history_copy')
+            self.builder.store(ir.Constant(ir.IntType(32), 0), counter_ptr)
+            self.builder.branch(loop_cond)
+
+            self.builder.position_at_start(loop_cond)
+            i = self.builder.load(counter_ptr)
+            cond = self.builder.icmp_signed('<', i, current_history_len)
+            self.builder.cbranch(cond, loop_body, loop_exit)
+
+            self.builder.position_at_start(loop_body)
+            
+            source_elem_ptr = self.builder.gep(source_history_ptr, [ir.Constant(ir.IntType(32), 0), i], inbounds=True)
+            val_to_copy = self.builder.load(source_elem_ptr)
+            
+            dest_elem_ptr = self.builder.gep(dest_data_ptr, [i], inbounds=True)
+            self.builder.store(val_to_copy, dest_elem_ptr)
+
+           
+            next_i = self.builder.add(i, ir.Constant(ir.IntType(32), 1))
+            self.builder.store(next_i, counter_ptr)
+            self.builder.branch(loop_cond)
+
+            self.builder.position_at_start(loop_exit)
+
+          
+            if dest_data_ptr is None:
+                self.report_error("None")
+                return None
+            return dest_data_ptr, ir.PointerType(element_type)
+
 
         vector_struct_type = self.struct_types.get("vector")
         zero = ir.Constant(ir.IntType(32), 0)

@@ -11,6 +11,6 @@ fun main()
     
     fastforward 1;
     print("After fastforward: x = ", x);
-
+    print("History of the elements: ",history(x));
     return 0;
 nuf

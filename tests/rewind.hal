@@ -20,6 +20,6 @@ fun main()
 
     fastforward 2; 
     print("After fastforward: a = ", a," and b= ",b);
-   
+    print(history(a),history(b));
     return 0;
 nuf
