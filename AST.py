@@ -54,6 +54,7 @@ class NodeType(Enum):
     AsExpression = "AsExpression"
     CastExpression="CastExpression"
     TimeLiteral = "TimeLiteral"
+    ReactiveExpression = "ReactiveExpression"
     
 
 
@@ -87,7 +88,19 @@ class Program(Node):
             "type": self.type().value,
             "statements": [{stmt.type().value: stmt.json()} for stmt in self.statements]
         }
-    
+
+class ReactiveExpression(Expression):
+    def __init__(self, expression: Expression) -> None:
+        self.expression = expression
+
+    def type(self) -> NodeType:
+        return NodeType.ReactiveExpression
+
+    def json(self) -> dict:
+        return {
+            "type": self.type().value,
+            "expression": self.expression.json()
+        }   
 
 class CastExpression(Expression):
     def __init__(self, expression: Expression, target_type: 'IdentifierLiteral') -> None:

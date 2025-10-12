@@ -4,7 +4,7 @@ import random
 from llvmlite import ir
 import os
 from AST import DoubleLiteral, Node,NodeType,Program, RaiseStatement,Statement,Expression, VarStatement,IdentifierLiteral,ReturnStatement,AssignStatement,CallExpression,InputExpression,NullLiteral, ClassStatement,ThisExpression,BranchStatement,ForkStatement,QubitDeclarationStatement,MeasureExpression
-from AST import ExpressionStatement,InfixExpression,IntegerLiteral,FloatLiteral, BlockStatement,FunctionStatement,IfStatement,BooleanLiteral,ArrayLiteral,RefExpression,DerefExpression,ReserveCall,RewindStatement, FastForwardStatement,SuperExpression,AsExpression,TimeLiteral
+from AST import ExpressionStatement,InfixExpression,IntegerLiteral,FloatLiteral, BlockStatement,FunctionStatement,IfStatement,BooleanLiteral,ArrayLiteral,RefExpression,DerefExpression,ReserveCall,RewindStatement, FastForwardStatement,SuperExpression,AsExpression,TimeLiteral,ReactiveExpression
 from AST import FunctionParameter,StringLiteral,WhileStatement,BreakStatement,ContinueStatement,PrefixExpression,PostfixExpression,LoadStatement,ArrayAccessExpression, StructInstanceExpression,StructAccessExpression,StructStatement,QubitResetStatement,CastExpression
 from typing import List, cast
 from Environment import Environment
@@ -43,6 +43,8 @@ class Compiler:
         self.struct_types["complex"] = complex_type
         self.struct_layouts["complex"] = {"real": 0, "imag": 1}
 
+        self.dependents: dict[str, list[str]] = {}
+        self.reactive_vars: dict[str, Expression] = {}
 
         vector_type = self.module.context.get_identified_type("vector")
         vector_type.set_body(
@@ -406,6 +408,61 @@ class Compiler:
         for stmt in concrete_statements:
             self.compile(stmt)
 
+    def _find_dependencies(self, node: Node) -> set[str]:
+        deps = set()
+        if isinstance(node, IdentifierLiteral) and node.value:
+            if self.env.lookup(node.value):
+                deps.add(node.value)
+        elif isinstance(node, InfixExpression):
+            if node.left_node:
+                deps.update(self._find_dependencies(node.left_node))
+            if node.right_node:
+                deps.update(self._find_dependencies(node.right_node))
+        elif isinstance(node, PrefixExpression):
+            if node.right_node:
+                deps.update(self._find_dependencies(node.right_node))
+        elif isinstance(node, PostfixExpression):
+             deps.update(self._find_dependencies(node.left_node))
+        elif isinstance(node, CallExpression):
+            if node.arguments:
+                for arg in node.arguments:
+                    deps.update(self._find_dependencies(arg))
+
+        elif isinstance(node, ArrayAccessExpression):
+            deps.update(self._find_dependencies(node.array))
+
+        return deps
+
+    def _trigger_updates_for(self, updated_var_name: str) -> None:
+        queue = [updated_var_name]
+        processed_in_chain = set()
+
+        while queue:
+            var_name = queue.pop(0)
+            if var_name in processed_in_chain:
+                continue
+            processed_in_chain.add(var_name)
+
+            if var_name not in self.dependents:
+                continue
+
+            for dependent_name in self.dependents[var_name]:
+                expression_ast = self.reactive_vars.get(dependent_name)
+                if not expression_ast:
+                    continue
+
+                dependent_entry = self.env.lookup(dependent_name)
+                if not dependent_entry:
+                    continue
+                dependent_ptr, _ = dependent_entry
+
+                resolved = self.resolve_value(expression_ast)
+                if resolved:
+                    new_value, _ = resolved
+                    self.builder.store(new_value, dependent_ptr)
+                    
+                    if dependent_name in self.dependents:
+                        queue.append(dependent_name)
 
     def visit_branch_statement(self, node: BranchStatement) -> None:
         current_func = self.builder.function
@@ -580,6 +637,19 @@ class Compiler:
 
         value_expr: Expression = node.value
         value_type: Optional[str] = node.value_type
+
+        if isinstance(value_expr, ReactiveExpression):
+            inner_expression = value_expr.expression
+            
+            dependencies = self._find_dependencies(inner_expression)
+            
+            self.reactive_vars[name] = inner_expression
+            for dep in dependencies:
+                if dep not in self.dependents:
+                    self.dependents[dep] = []
+                self.dependents[dep].append(name)
+            
+            value_expr = inner_expression
 
         if isinstance(value_expr, NullLiteral):
             ptr_type = ir.PointerType(ir.IntType(8))
@@ -960,10 +1030,14 @@ class Compiler:
                     self.builder.store(value, ptr)
                     if self.is_in_main and name in self.history_vars:
                         self._emit_save_state()
+                    if name in self.dependents:
+                        self._trigger_updates_for(name)   
             else: 
                 self.builder.store(value, ptr)
                 if self.is_in_main and name in self.history_vars:
                     self._emit_save_state()
+                if name in self.dependents:
+                        self._trigger_updates_for(name)
 
         elif isinstance(node.ident, StructAccessExpression):
             
@@ -1087,6 +1161,13 @@ class Compiler:
                     return
 
             self.builder.store(right_value, elem_ptr)
+
+            array_name = None
+            if isinstance(node.ident.array, IdentifierLiteral):
+                array_name = node.ident.array.value
+            
+            if array_name and array_name in self.dependents:
+                self._trigger_updates_for(array_name)
             if self.is_in_main:
                 
                 pass

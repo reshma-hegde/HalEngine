@@ -3,7 +3,7 @@ from Token import Token, TokenType
 from typing import Callable, Optional, List
 from enum import Enum,auto
 
-from AST import RaiseStatement, Statement,Expression,Program,FunctionStatement,ReturnStatement,BlockStatement,AssignStatement,PostfixExpression,LoadStatement,ArrayLiteral,NullLiteral,StructInstanceExpression,ClassStatement,ThisExpression,ForkStatement,QubitResetStatement,PauseStatement
+from AST import RaiseStatement, Statement,Expression,Program,FunctionStatement,ReturnStatement,BlockStatement,AssignStatement,PostfixExpression,LoadStatement,ArrayLiteral,NullLiteral,StructInstanceExpression,ClassStatement,ThisExpression,ForkStatement,QubitResetStatement,PauseStatement,ReactiveExpression
 from AST import ExpressionStatement, InfixExpression,IntegerLiteral,FloatLiteral,IdentifierLiteral,VarStatement, PrefixExpression, InputExpression,ArrayAccessExpression,StructStatement,StructAccessExpression,MemberStatement,BranchStatement,DoubleLiteral,SuperExpression,AsExpression, TimeLiteral
 from AST import BooleanLiteral,IfStatement,CallExpression,FunctionParameter,StringLiteral, WhileStatement,BreakStatement,ContinueStatement,ForStatement,ReserveCall,RefExpression,DerefExpression,RewindStatement, FastForwardStatement,MeasureExpression,QubitDeclarationStatement,CastExpression
 
@@ -93,7 +93,7 @@ class Parser:
             TokenType.SUPER: self.parse_super_expression,
             TokenType.ARROW:self.parse_gt_ignore,
             TokenType.TIME: self.parse_time_literal,
-            
+            TokenType.REACTIVE: self.parse_reactive_expression,
 
         } 
         self.infix_parse_fns: dict[TokenType,Callable]={
@@ -195,7 +195,23 @@ class Parser:
         return double_lit
 
 
+    def parse_reactive_expression(self) -> Expression | None:
+        if not self.expect_peek(TokenType.LPAREN):
+            self.errors.append("Expected '(' after 'reactive'")
+            return None
 
+        self.next_token()
+        inner_expression = self.parse_expression(PrecedenceType.P_LOWEST)
+
+        if not self.expect_peek(TokenType.RPAREN):
+            self.errors.append("Expected ')' after reactive expression")
+            return None
+
+        if inner_expression is None:
+            self.errors.append("Reactive expression cannot be empty.")
+            return None
+
+        return ReactiveExpression(expression=inner_expression)
 
 
     def parse_program(self) -> Program:

@@ -1,0 +1,39 @@
+fun main()
+    array nums = [1, 2, 3];
+    var a = 10;
+    var b = 5;
+
+    var sum_ab = reactive(a + b); @reactive scalars
+    var sum_nums = reactive(nums[0] + nums[1] + nums[2]); @reactive array
+    var total = reactive(sum_ab + sum_nums); @reactive chain
+
+    print("Initial a =", a, "b =", b);
+    print("Initial nums =", nums);
+    print("Initial sum_ab =", sum_ab);
+    print("Initial sum_nums =", sum_nums);
+    print("Initial total =", total);
+
+    a = 15;
+    b = 10;
+
+    print("\nAfter updating a and b:");
+    print("a = ", a, " b = ", b);
+    print("sum_ab = ", sum_ab);
+    print("total = ", total);
+
+    nums[1] = 20;
+
+    print("\nAfter updating nums[1]:");
+    print("nums = ", nums);
+    print("sum_nums = ", sum_nums);
+    print("total = ", total);
+
+    nums[0] = 5;
+
+    print("\nAfter updating nums[0]:");
+    print("nums = ", nums);
+    print("sum_nums = ", sum_nums);
+    print("total = ", total);
+
+    return 0;
+nuf
