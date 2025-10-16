@@ -22,7 +22,7 @@ HalEngine is a high-level programming language and compiler designed to explore 
 You can run HalEngine on Windows using the provided executable:
 
 1. Open a terminal (Command Prompt or PowerShell).
-2. Navigate to the HalEngine directory containing `halengine.exe`.
+2. Navigate to the HalEngine directory containing `halengine.exe` and create a file with an extension .hal.
 3. Run a HAL program using:
 ```bash
 halengine.exe path\to\your\program.hal
