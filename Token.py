@@ -107,6 +107,7 @@ class TokenType(Enum):
     TILDE="TILDE" 
     TIME="TIME"
     REACTIVE="REACTIVE"
+    SPAWN="SPAWN"
     
 
     
@@ -181,7 +182,8 @@ KEYWORDS: dict[str,TokenType]={
     "pause":TokenType.PAUSE,
     "raise":TokenType.RAISE,
     "as":TokenType.AS,
-    "reactive":TokenType.REACTIVE
+    "reactive":TokenType.REACTIVE,
+    "spawn":TokenType.SPAWN
     
     #"file":TokenType.FILE,
     

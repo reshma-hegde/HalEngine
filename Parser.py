@@ -5,7 +5,7 @@ from enum import Enum,auto
 
 from AST import RaiseStatement, Statement,Expression,Program,FunctionStatement,ReturnStatement,BlockStatement,AssignStatement,PostfixExpression,LoadStatement,ArrayLiteral,NullLiteral,StructInstanceExpression,ClassStatement,ThisExpression,ForkStatement,QubitResetStatement,PauseStatement,ReactiveExpression
 from AST import ExpressionStatement, InfixExpression,IntegerLiteral,FloatLiteral,IdentifierLiteral,VarStatement, PrefixExpression, InputExpression,ArrayAccessExpression,StructStatement,StructAccessExpression,MemberStatement,BranchStatement,DoubleLiteral,SuperExpression,AsExpression, TimeLiteral
-from AST import BooleanLiteral,IfStatement,CallExpression,FunctionParameter,StringLiteral, WhileStatement,BreakStatement,ContinueStatement,ForStatement,ReserveCall,RefExpression,DerefExpression,RewindStatement, FastForwardStatement,MeasureExpression,QubitDeclarationStatement,CastExpression
+from AST import BooleanLiteral,IfStatement,CallExpression,FunctionParameter,StringLiteral, WhileStatement,BreakStatement,ContinueStatement,ForStatement,ReserveCall,RefExpression,DerefExpression,RewindStatement, FastForwardStatement,MeasureExpression,QubitDeclarationStatement,CastExpression,AwaitExpression,SpawnExpression
 
 
 class PrecedenceType(Enum):
@@ -94,6 +94,8 @@ class Parser:
             TokenType.ARROW:self.parse_gt_ignore,
             TokenType.TIME: self.parse_time_literal,
             TokenType.REACTIVE: self.parse_reactive_expression,
+            TokenType.SPAWN: self.parse_spawn_expression,
+            TokenType.AWAIT: self.parse_await_expression,
 
         } 
         self.infix_parse_fns: dict[TokenType,Callable]={
@@ -193,6 +195,26 @@ class Parser:
             return DoubleLiteral(0.0)
 
         return double_lit
+
+
+    def parse_spawn_expression(self) -> Expression | None:
+        self.next_token() 
+        expr = self.parse_expression(PrecedenceType.P_LOWEST)
+
+        if not isinstance(expr, CallExpression):
+            self.errors.append(f"Expected a function call after 'spawn', but got {type(expr).__name__}")
+            return None
+
+        return SpawnExpression(call=expr)
+
+    def parse_await_expression(self) -> Expression | None:
+        self.next_token() 
+        task_expr = self.parse_expression(PrecedenceType.P_LOWEST)
+        if task_expr is None:
+            self.errors.append("Expected an expression (a task handle) after 'await'")
+            return None
+
+        return AwaitExpression(task=task_expr)
 
 
     def parse_reactive_expression(self) -> Expression | None:

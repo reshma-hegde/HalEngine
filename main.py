@@ -1,4 +1,10 @@
 import sys
+import os
+import platform 
+import subprocess
+from llvmlite import ir
+import llvmlite.binding as llvm
+from ctypes import CFUNCTYPE, c_int, c_float
 from lexer import Lexer
 from AST import Program
 from Parser import Parser
@@ -6,21 +12,16 @@ from Compiler import Compiler
 import json
 import time
 
-from llvmlite import ir
-import llvmlite.binding as llvm
-from ctypes import CFUNCTYPE, c_int, c_float
-
-#llc -filetype=obj debug/ir.ll -o out.o
-#gcc out.o -o out.exe
-#./out.exe
-
-
+#python main.py tests/thread.hal
+#llc -filetype=obj debug/ir.ll -o output.o
+#gcc output.o -o thread.exe -lpthread
+#./thread
 
 LEXER_DEBUG: bool = False
 PARSER_DEBUG: bool = True
-COMPILER_DEBUG: bool =True 
-RUN_CODE:bool=True
-#qubitrestore,quantumtime,pause
+COMPILER_DEBUG: bool = True
+RUN_CODE: bool = True
+
 if __name__ == '__main__':
     try:
         if len(sys.argv) < 2:
@@ -50,6 +51,8 @@ if __name__ == '__main__':
 
         if PARSER_DEBUG:
             print("==== PARSER DEBUG ====")
+            
+            os.makedirs("debug", exist_ok=True)
             with open("debug/ast.json", "w") as f:
                 json.dump(program.json(), f, indent=4)
             print("Successful!")
@@ -57,34 +60,43 @@ if __name__ == '__main__':
         c: Compiler = Compiler()
         c.compile(node=program)
         
-
         llvm_module: ir.Module = c.module
 
-        llvm_module.triple = "x86_64-w64-windows-gnu"
+        
+        llvm_module.triple = llvm.get_default_triple()
 
         if COMPILER_DEBUG:
+            os.makedirs("debug", exist_ok=True)
             with open("debug/ir.ll", "w") as f:
                 f.write(str(llvm_module))
-
         
-
         if RUN_CODE:
             llvm.initialize()
             llvm.initialize_native_target()
             llvm.initialize_native_asmprinter()
+
+            system = platform.system()
+            if system == "Linux":
+                
+                try:
+                    llvm.load_library_permanently('libpthread.so.0')
+                except RuntimeError:
+                    print("Warning: Could not load 'libpthread.so.0'. A newer version might be used by default.")
+            elif system == "Darwin": 
+                llvm.load_library_permanently('libpthread.dylib')
+            
             try:
-                llvm_ir_parsed=llvm.parse_assembly(str(llvm_module))
+                llvm_ir_parsed = llvm.parse_assembly(str(llvm_module))
                 llvm_ir_parsed.verify()
             except Exception as e:
-                print("llvm verification error")
+                print("LLVM verification error")
                 raise 
 
-            target_machine=llvm.Target.from_default_triple().create_target_machine()
-            engine=llvm.create_mcjit_compiler(llvm_ir_parsed,target_machine)
+            target_machine = llvm.Target.from_default_triple().create_target_machine()
+            engine = llvm.create_mcjit_compiler(llvm_ir_parsed, target_machine)
             engine.finalize_object()
             
-
-            entry=engine.get_function_address('main')
+            entry = engine.get_function_address('main')
             if entry == 0:
                 raise RuntimeError("Function 'main' not found in LLVM module.")
             
@@ -98,16 +110,16 @@ if __name__ == '__main__':
             elif isinstance(ret_type, ir.FloatType):
                 CFUNC = CFUNCTYPE(c_float)
             else:
-                raise TypeError(f"Unsupported return type for main(): {ret_type}")
+                print(f"Warning: Unsupported return type for main(): {ret_type}. Defaulting to int.")
+                CFUNC = CFUNCTYPE(c_int)
 
-           
             cfunc = CFUNC(entry)
-            st=time.time()
-            result=cfunc()
-            et=time.time()
+            st = time.time()
+            result = cfunc()
+            et = time.time()
             print(f'\n====Program returned {result} executed in {round((et-st)*1000,6)}ms====')
             
     except SyntaxError as e:
         print(f"SyntaxError: {e}") 
     except Exception as e:
-        print(f"Error: {e}") 
+        print(f"Error: {e}")

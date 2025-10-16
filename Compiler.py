@@ -5,7 +5,7 @@ from llvmlite import ir
 import os
 from AST import DoubleLiteral, Node,NodeType,Program, RaiseStatement,Statement,Expression, VarStatement,IdentifierLiteral,ReturnStatement,AssignStatement,CallExpression,InputExpression,NullLiteral, ClassStatement,ThisExpression,BranchStatement,ForkStatement,QubitDeclarationStatement,MeasureExpression
 from AST import ExpressionStatement,InfixExpression,IntegerLiteral,FloatLiteral, BlockStatement,FunctionStatement,IfStatement,BooleanLiteral,ArrayLiteral,RefExpression,DerefExpression,ReserveCall,RewindStatement, FastForwardStatement,SuperExpression,AsExpression,TimeLiteral,ReactiveExpression
-from AST import FunctionParameter,StringLiteral,WhileStatement,BreakStatement,ContinueStatement,PrefixExpression,PostfixExpression,LoadStatement,ArrayAccessExpression, StructInstanceExpression,StructAccessExpression,StructStatement,QubitResetStatement,CastExpression
+from AST import FunctionParameter,StringLiteral,WhileStatement,BreakStatement,ContinueStatement,PrefixExpression,PostfixExpression,LoadStatement,ArrayAccessExpression, StructInstanceExpression,StructAccessExpression,StructStatement,QubitResetStatement,CastExpression,SpawnExpression,AwaitExpression
 from typing import List, cast
 from Environment import Environment
 from typing import Optional
@@ -22,10 +22,12 @@ class Compiler:
         self.module:ir.Module=ir.Module('main')
         self.errors: list[str] = []
         self.array_lengths: dict[str, int] = {}
+        
         self.struct_types: dict[str, ir.IdentifiedStructType] = {}
         self.struct_layouts: dict[str, dict[str, int]] = {}
         self.class_methods: dict[str, list[str]] = {}
         self.class_parents: dict[str, str] = {}
+        self.task_return_types: dict[str, ir.Type] = {}
         self.type_map:dict[str,ir.Type]={
             'int':ir.IntType(32),
             'float':ir.FloatType(),
@@ -42,6 +44,9 @@ class Compiler:
         complex_type.set_body(ir.DoubleType(), ir.DoubleType()) 
         self.struct_types["complex"] = complex_type
         self.struct_layouts["complex"] = {"real": 0, "imag": 1}
+
+        self.module.triple = "x86_64-w64-windows-gnu"
+        self.module.data_layout = "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
 
         self.dependents: dict[str, list[str]] = {}
         self.reactive_vars: dict[str, Expression] = {}
@@ -100,6 +105,15 @@ class Compiler:
                 var_arg=False
             )
             return ir.Function(self.module,fnty,'atoi')
+        
+        def __init_fflush()->ir.Function:
+            
+            fnty:ir.FunctionType=ir.FunctionType(
+                self.type_map['int'],
+                [self.type_map['file']], 
+                var_arg=False
+            )
+            return ir.Function(self.module,fnty,'fflush')
         
         def __init_atof()->ir.Function:
             fnty:ir.FunctionType=ir.FunctionType(
@@ -251,12 +265,30 @@ class Compiler:
         def __init_sleep()->ir.Function:
             fnty = ir.FunctionType(ir.VoidType(), [ir.IntType(32)])
             return ir.Function(self.module, fnty, 'Sleep')
-
         
+        pthread_t = ir.IntType(64)
+        
+        start_routine_fnty = ir.FunctionType(ir.IntType(8).as_pointer(), [ir.IntType(8).as_pointer()])
+        
+        
+        pthread_create_fnty = ir.FunctionType(ir.IntType(32), [
+            pthread_t.as_pointer(),
+            ir.IntType(8).as_pointer(),
+            start_routine_fnty.as_pointer(),
+            ir.IntType(8).as_pointer()
+        ])
+       
+
+        pthread_create_func = ir.Function(self.module, pthread_create_fnty, 'pthread_create')
+        self.env.define('pthread_create', pthread_create_func, ir.IntType(32))
+
+        pthread_join_fnty = ir.FunctionType(ir.IntType(32), 
+            [pthread_t, ir.IntType(8).as_pointer().as_pointer()])
+        pthread_join_func = ir.Function(self.module, pthread_join_fnty, 'pthread_join')
+        self.env.define('pthread_join', pthread_join_func, ir.IntType(32))
         
         self.env.define('sleep', __init_sleep(), ir.IntType(32))
-
-        
+        self.env.define('fflush', __init_fflush(), self.type_map['int'])
         self.env.define('time', __init_time(), ir.IntType(32))
         self.env.define('srand', __init_srand(), ir.VoidType())
         self.env.define('rand', __init_rand(), ir.IntType(32))
@@ -622,8 +654,179 @@ class Compiler:
                 self.visit_struct_definition_statement(node.expr)
             else:
                 self.resolve_value(node.expr)
+
+    def _get_type_size_in_bytes(self, typ: ir.Type) -> int:
+        """Helper to safely calculate the size of a type in bytes."""
+        if isinstance(typ, ir.IntType):
+            return (typ.width + 7) // 8  
+        elif isinstance(typ, ir.FloatType):
+            return 4
+        elif isinstance(typ, ir.DoubleType):
+            return 8
+        elif isinstance(typ, ir.PointerType):
+            return 8  
         
-                
+      
+        try:
+            return typ.get_abi_size(self.module.data_layout)
+        except AttributeError:
+            self.report_error(f"Cannot determine ABI size for type: {typ}. It might not be a valid IR type.")
+            return 0
+        except Exception as e:
+            self.report_error(f"Failed to get ABI size for {typ}: {e}")
+            return 0
+        
+    def visit_spawn_expression(self, node: SpawnExpression, task_name: str) -> tuple[ir.Value, ir.Type] | None:
+        call_node = node.call
+
+        if not isinstance(call_node.function, IdentifierLiteral) or not call_node.function.value:
+            self.report_error("spawn can only be used with named functions.")
+            return None
+
+        func_name = call_node.function.value
+
+        args_ir: list[ir.Value] = []
+        arg_types: list[ir.Type] = []
+        if call_node.arguments:
+            for arg_expr in call_node.arguments:
+                resolved = self.resolve_value(arg_expr)
+                if not resolved:
+                    return self.report_error("Could not resolve argument for spawned function.")
+                val, typ = resolved
+                args_ir.append(val)
+                arg_types.append(typ)
+
+        target_func: Optional[ir.Function] = None
+        func_entry = self.env.lookup(func_name)
+
+        if func_entry:
+            target_func = cast(ir.Function, func_entry[0])
+        elif func_name in self.generic_functions:
+            generic_ast = self.generic_functions[func_name]
+            type_suffixes = [str(t).replace('%', '').replace(' ', '_').replace('*', 'ptr') for t in arg_types]
+            mangled_name = f"{func_name}_{'_'.join(type_suffixes)}"
+            
+            instance_result = self.env.lookup(mangled_name)
+            if instance_result:
+                target_func = cast(ir.Function, instance_result[0])
+            else:
+                new_func_result = self._instantiate_and_compile_generic_function(generic_ast, mangled_name, arg_types)
+                if new_func_result:
+                    target_func = new_func_result[0]
+
+        if not target_func:
+            return self.report_error(f"Function '{func_name}' not found for spawning.")
+
+        self.task_return_types[task_name] = target_func.return_value.type
+
+       
+        arg_struct_elements = [arg.type for arg in args_ir] # type: ignore
+        arg_struct_type = ir.LiteralStructType(arg_struct_elements)
+        wrapper_fnty = ir.FunctionType(ir.IntType(8).as_pointer(), [ir.IntType(8).as_pointer()])
+        wrapper_func = ir.Function(self.module, wrapper_fnty, f"{func_name}_thread_wrapper_{self.increment_counter()}")
+        
+        wrapper_builder = ir.IRBuilder(wrapper_func.append_basic_block('entry'))
+        raw_arg_ptr = wrapper_func.args[0]
+        typed_arg_ptr = wrapper_builder.bitcast(raw_arg_ptr, ir.PointerType(arg_struct_type))
+        
+        malloc_func, _ = self.env.lookup("reserve") #type: ignore
+        free_func, _ = self.env.lookup("free") #type: ignore
+        
+        result_storage_ptr = None
+        return_type = target_func.return_value.type
+        if not isinstance(return_type, ir.VoidType):
+            size = self._get_type_size_in_bytes(return_type)
+            if size == 0: return None
+            result_storage_ptr = wrapper_builder.bitcast(
+                wrapper_builder.call(malloc_func, [ir.Constant(ir.IntType(32), size)]),
+                ir.PointerType(return_type)
+            )
+
+        unpacked_args = [wrapper_builder.load(wrapper_builder.gep(typed_arg_ptr, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), i)], inbounds=True)) for i in range(len(args_ir))]
+        result = wrapper_builder.call(target_func, unpacked_args)
+        
+        if not isinstance(return_type, ir.VoidType) and result_storage_ptr:
+            wrapper_builder.store(result, result_storage_ptr)
+        
+        wrapper_builder.call(free_func, [raw_arg_ptr]) 
+
+        if result_storage_ptr:
+            wrapper_builder.ret(wrapper_builder.bitcast(result_storage_ptr, ir.IntType(8).as_pointer()))
+        else:
+            wrapper_builder.ret(ir.Constant(ir.IntType(8).as_pointer(), None))
+
+        
+        task_struct_type = ir.LiteralStructType([ir.IntType(64)]) 
+        task_struct_size = self._get_type_size_in_bytes(task_struct_type)
+        arg_struct_size = self._get_type_size_in_bytes(arg_struct_type)
+
+        
+        task_ptr = self.builder.bitcast(self.builder.call(malloc_func, [ir.Constant(ir.IntType(32), task_struct_size)]), ir.PointerType(task_struct_type))
+        arg_struct_ptr = self.builder.bitcast(self.builder.call(malloc_func, [ir.Constant(ir.IntType(32), arg_struct_size)]), ir.PointerType(arg_struct_type))
+        
+        for i, arg in enumerate(args_ir):
+            self.builder.store(arg, self.builder.gep(arg_struct_ptr, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), i)], inbounds=True))
+            
+        pthread_create_func, _ = self.env.lookup('pthread_create') #type: ignore
+        pthread_id_ptr = self.builder.gep(task_ptr, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True)
+        arg_struct_ptr_i8 = self.builder.bitcast(arg_struct_ptr, ir.IntType(8).as_pointer())
+        
+        self.builder.call(pthread_create_func, [pthread_id_ptr, ir.Constant(ir.IntType(8).as_pointer(), None), wrapper_func, arg_struct_ptr_i8])
+
+        
+        return task_ptr, ir.PointerType(task_struct_type) # type: ignore
+    
+    
+    def visit_await_expression(self, node: AwaitExpression) -> tuple[ir.Value, ir.Type] | None:
+        if not isinstance(node.task, IdentifierLiteral) or not node.task.value:
+            return self.report_error("'await' must be used with a task variable.")
+        
+        task_name = node.task.value
+
+        task_entry = self.env.lookup(task_name)
+        if not task_entry:
+            return self.report_error(f"Could not resolve task handle '{task_name}' for 'await'.")
+        
+        task_storage_ptr, _ = task_entry
+        task_handle_ptr = self.builder.load(task_storage_ptr, name=f"{task_name}_handle")
+
+        
+        return_type = self.task_return_types.get(task_name)
+        if not return_type:
+            return self.report_error(f"Cannot 'await' on '{task_name}', as it is not a recognized task.")
+            
+        pthread_id_ptr = self.builder.gep(task_handle_ptr, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)], inbounds=True)
+        pthread_id = self.builder.load(pthread_id_ptr)
+        
+        pthread_join_func, _ = self.env.lookup('pthread_join') #type: ignore
+        free_func, _ = self.env.lookup("free") #type: ignore
+        
+        if isinstance(return_type, ir.VoidType):
+            self.builder.call(pthread_join_func, [pthread_id, ir.Constant(ir.IntType(8).as_pointer().as_pointer(), None)])
+            self.builder.call(free_func, [self.builder.bitcast(task_handle_ptr, ir.IntType(8).as_pointer())])
+            return (ir.Constant(ir.IntType(32), 0), ir.VoidType())
+
+        
+        retval_storage = self.builder.alloca(ir.IntType(8).as_pointer(), name="retval_storage")
+
+        self.builder.call(pthread_join_func, [pthread_id, retval_storage])
+
+        
+        raw_result_ptr = self.builder.load(retval_storage, "raw_result_ptr")
+
+        
+        typed_result_ptr = self.builder.bitcast(raw_result_ptr, ir.PointerType(return_type))
+        
+        
+        result_val = self.builder.load(typed_result_ptr)
+
+      
+        self.builder.call(free_func, [raw_result_ptr]) 
+        self.builder.call(free_func, [self.builder.bitcast(task_handle_ptr, ir.IntType(8).as_pointer())]) 
+
+        return result_val, return_type
+    
+    
     def visit_var_statement(self, node: VarStatement) -> None:
         if node.name is None or not isinstance(node.name, IdentifierLiteral):
             raise ValueError("Variable name must be a non-null IdentifierLiteral")
@@ -638,6 +841,33 @@ class Compiler:
         value_expr: Expression = node.value
         value_type: Optional[str] = node.value_type
 
+        if isinstance(value_expr, SpawnExpression):
+            
+            resolved = self.visit_spawn_expression(value_expr, name)
+            if resolved is None:
+                return self.report_error(f"Failed to compile spawn expression for variable '{name}'.")
+            
+            value_ir, ir_type = resolved
+            
+           
+            ptr = self.builder.alloca(ir_type, name=name)
+            self.builder.store(value_ir, ptr)
+            self.env.define(name, ptr, ir_type)
+            return
+        
+        if isinstance(value_expr, AwaitExpression):
+            resolved = self.visit_await_expression(value_expr)
+            if resolved is None:
+                return self.report_error(f"Failed to compile await expression for variable '{name}'.")
+            
+            value_ir, ir_type = resolved
+            
+            if not isinstance(ir_type, ir.VoidType):
+                ptr = self.builder.alloca(ir_type, name=name)
+                self.builder.store(value_ir, ptr)
+                self.env.define(name, ptr, ir_type)
+            return
+        
         if isinstance(value_expr, ReactiveExpression):
             inner_expression = value_expr.expression
             
@@ -718,7 +948,6 @@ class Compiler:
                                                [initial_state_idx, initial_state_idx], 
                                                inbounds=True, name=f"{name}_initial_history_slot")
             self.builder.store(value_ir, target_slot_ptr)
-
 
     def visit_block_statement(self,node:BlockStatement)->None:
         for stmt in node.statements:
@@ -916,6 +1145,24 @@ class Compiler:
                 self.errors.append(
                     f"COMPILE ERROR: Assignment to '{name}' is missing a right-hand side expression"
                 )
+                return
+            if name is None:
+                self.report_error("none error")
+                return 
+            if isinstance(node.right_value, AwaitExpression):
+                resolved = self.visit_await_expression(node.right_value)
+                if resolved is None:
+                    self.errors.append(f"COMPILE ERROR: Cannot resolve await expression in assignment to '{name}'")
+                    return
+                
+                right_value, _ = resolved
+                entry = self.env.lookup(name)
+                if entry is None:
+                    self.errors.append(f"COMPILE ERROR: Identifier '{name}' has not been declared")
+                    return
+                
+                ptr, _ = entry
+                self.builder.store(right_value, ptr)
                 return
 
             result = self.resolve_value(node.right_value)
@@ -3358,6 +3605,12 @@ class Compiler:
             newline_fmt, _ = self.convert_string("\n")
             newline_ptr = self.builder.gep(newline_fmt, [zero, zero], inbounds=True)
             self.builder.call(printf_func, [newline_ptr])
+
+            fflush_func_res = self.env.lookup("fflush")
+            if fflush_func_res:
+                fflush_func, _ = fflush_func_res
+                null_ptr = ir.Constant(self.type_map['file'], None)
+                self.builder.call(fflush_func, [null_ptr])
             
             return ir.Constant(ir.IntType(32), 0), ir.IntType(32)
       
@@ -3877,7 +4130,6 @@ class Compiler:
                 return self.visit_as_expression(cast(AsExpression, node))
             case NodeType.StructAccessExpression:
                 return self.visit_member_access(cast(StructAccessExpression, node))
-            
             case NodeType.MeasureExpression: 
                 return self.visit_measure_expression(cast(MeasureExpression, node))
             

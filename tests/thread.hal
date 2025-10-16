@@ -1,0 +1,31 @@
+fun count_up(var id,var n)
+    var i = 0;
+    while i <n
+        i = i + 1;
+        print("Thread: ",id," counting:", i);
+        sleep(0.01s);
+        
+    elihw
+    return i;
+nuf
+
+fun main()
+    print("Starting interleaving threads...\n");
+
+    var task1 = spawn count_up(1,5);
+    var task2 = spawn count_up(2,5);
+    var task3 = spawn count_up(3,5);
+    var task4 = spawn count_up(4,5);
+
+    print("Tasks running concurrently...\n");
+
+   
+    var result1 = await task1;
+    var result2 = await task2;
+    var result3 = await task3;
+    var result4 = await task4;
+
+    print("Results are:", result1," ", result2," ",result3, " ",result4);
+    print("All tasks finished!");
+    return 0;
+nuf

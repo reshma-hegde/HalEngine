@@ -55,6 +55,8 @@ class NodeType(Enum):
     CastExpression="CastExpression"
     TimeLiteral = "TimeLiteral"
     ReactiveExpression = "ReactiveExpression"
+    SpawnExpression = "SpawnExpression"
+    AwaitExpression = "AwaitExpression"
     
 
 
@@ -87,6 +89,32 @@ class Program(Node):
         return {
             "type": self.type().value,
             "statements": [{stmt.type().value: stmt.json()} for stmt in self.statements]
+        }
+    
+class SpawnExpression(Expression):
+    def __init__(self, call: 'CallExpression') -> None:
+        self.call = call
+
+    def type(self) -> NodeType:
+        return NodeType.SpawnExpression
+
+    def json(self) -> dict:
+        return {
+            "type": self.type().value,
+            "call": self.call.json()
+        }
+
+class AwaitExpression(Expression):
+    def __init__(self, task: Expression) -> None:
+        self.task = task
+
+    def type(self) -> NodeType:
+        return NodeType.AwaitExpression
+
+    def json(self) -> dict:
+        return {
+            "type": self.type().value,
+            "task": self.task.json()
         }
 
 class ReactiveExpression(Expression):
