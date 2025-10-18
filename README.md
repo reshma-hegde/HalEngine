@@ -23,7 +23,7 @@ You can run HalEngine on Windows using the provided executable:
 
 1. Open a terminal (Command Prompt or PowerShell).
 2. Navigate to the HalEngine directory containing `halengine.exe` and create a file with an extension .hal.
-3. Run a HAL program using:
+3. Run a HalEngine program using:
 ```bash
 halengine.exe path\to\your\program.hal
 ```

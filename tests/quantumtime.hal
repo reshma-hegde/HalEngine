@@ -1,26 +1,24 @@
 fun main()
     qubit q1;
+    qubit q2;
+
     H(q1);
+    CNOT(q1, q2);
+
     var r1 = measure q1;
+    print("Initial r1: ", r1);
+
     fork
-        
-       H(q1);
-       r1=measure q1;
-    or 
- 
         H(q1);
-        H(q1);
-        r1=measure q1;
-        
+        r1 = measure q1;
+        print("Timeline A r1: ", r1);
+    or
+        X(q1);
+        r1 = measure q1;
+        print("Timeline B r1: ", r1);
+
     merge timelines;
 
-    var i = 0;
-    var c = len(timelines);
-    while i < c
-        
-        print("Timeline ", i, " q1: ",timelines[i]);
-        i++;
-    elihw
-
+    print("Timelines merged: ", timelines);
     return 0;
 nuf

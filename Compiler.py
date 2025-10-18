@@ -578,10 +578,10 @@ class Compiler:
             return 
          
         target_var_name: Optional[str] = None
-        first_stmt = node.branches[0].statements[0]
-        if isinstance(first_stmt, AssignStatement) and isinstance(first_stmt.ident, IdentifierLiteral):
-            target_var_name = first_stmt.ident.value
-        
+        for stmt in node.branches[0].statements:
+            if isinstance(stmt, AssignStatement) and isinstance(stmt.ident, IdentifierLiteral):
+                target_var_name = stmt.ident.value
+                break
         if target_var_name is None:
             self.report_error("Could not determine which variable is being modified in the fork block. The first statement in a branch must be an assignment.")
             return
@@ -595,12 +595,20 @@ class Compiler:
 
         initial_value = self.builder.load(var_ptr, name=f"{target_var_name}_snapshot")
 
+        initial_qubit_states: dict[str, dict] = {}
+        for q_name, q_state in self.qubits.items():
+            initial_qubit_states[q_name] = q_state.copy()
+
         outcome_values: List[ir.Value] = []
         outcome_types: List[ir.Type] = []
 
         for branch in node.branches:
             
             self.builder.store(initial_value, var_ptr)
+
+            self.qubits = {}
+            for q_name, q_state in initial_qubit_states.items():
+                self.qubits[q_name] = q_state.copy()
            
             self.compile(branch)
             
@@ -609,6 +617,10 @@ class Compiler:
             outcome_types.append(final_value.type)
 
         
+        self.qubits = {}
+        for q_name, q_state in initial_qubit_states.items():
+            self.qubits[q_name] = q_state.copy()
+
         if not outcome_values:
             return
 
@@ -645,8 +657,6 @@ class Compiler:
         self.env.define(merge_var_name, result_array_ptr, result_array_ptr.type)
         if merge_var_name:
              self.array_lengths[merge_var_name] = num_outcomes
-              
-        
 
     def visit_expression_statement(self, node: ExpressionStatement) -> None:
         if node.expr is not None:
