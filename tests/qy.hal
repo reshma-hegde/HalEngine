@@ -1,0 +1,11 @@
+fun main()
+    qubit q1;
+
+    H(q1);
+    Y(q1);
+    H(q1);
+    var r1 = measure q1;
+    print("Measure after H + Y + H: ", r1);
+
+    return 0;
+nuf

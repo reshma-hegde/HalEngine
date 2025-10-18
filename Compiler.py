@@ -2314,6 +2314,60 @@ class Compiler:
         if not q["superposition"]:
             q["state"] = 1 - q["state"]
 
+
+    def handle_Y_call(self, args: list) -> None:
+        if len(args) != 1:
+            self.report_error("Y gate requires exactly one qubit argument.")
+            return
+
+        node = args[0]
+        if not isinstance(node, IdentifierLiteral):
+            self.report_error("Y gate argument must be a qubit identifier.")
+            return
+
+        name = node.value
+        if name not in self.qubits:
+            self.report_error(f"Qubit '{name}' not declared.")
+            return
+
+        q = self.qubits[name]
+        
+        alpha = complex(q.get("alpha", 1.0))
+        beta = complex(q.get("beta", 0.0))
+
+        new_alpha = -1j * beta
+        new_beta = 1j * alpha
+
+        q["alpha"] = new_alpha
+        q["beta"] = new_beta
+        
+        q["superposition"] = True
+
+    
+    def handle_Z_call(self, args: list) -> None:
+        if len(args) != 1:
+            self.report_error("Z gate requires exactly one qubit argument.")
+            return
+
+        node = args[0]
+        if not isinstance(node, IdentifierLiteral):
+            self.report_error("Z gate argument must be a qubit identifier.")
+            return
+
+        name = node.value
+        if name not in self.qubits:
+            self.report_error(f"Qubit '{name}' not declared.")
+            return
+
+        q = self.qubits[name]
+        
+        alpha = complex(q.get("alpha", 1.0))
+        beta = complex(q.get("beta", 0.0))
+
+        q["alpha"] = alpha
+        q["beta"] = -beta
+        
+        q["superposition"] = True
         
     def visit_measure_expression(self, node: MeasureExpression) -> tuple[ir.Value, ir.Type] | None:
         target_name = node.target.value
@@ -3320,6 +3374,20 @@ class Compiler:
                 self.report_error("X function requires a qubit argument.")
                 return None
             self.handle_X_call(node.arguments)
+            return None
+        
+        if name == "Y":
+            if node.arguments is None:
+                self.report_error("Y function requires a qubit argument.")
+                return None
+            self.handle_Y_call(node.arguments)
+            return None
+
+        if name == "Z":
+            if node.arguments is None:
+                self.report_error("Z function requires a qubit argument.")
+                return None
+            self.handle_Z_call(node.arguments)
             return None
         
         if name == "SWAP":
