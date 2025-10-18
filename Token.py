@@ -96,8 +96,8 @@ class TokenType(Enum):
     MEASURE="MEASURE"
     RESET="RESET"
     PIPE="|"
-    SNAPSHOT="SNAPSHOT"
-    RESTORE="RESTORE"
+    FREEZE="FREEZE"
+    UNFREEZE="UNFREEZE"
     SUPER="SUPER"
     ARROW="ARROW"
     PAUSE="PAUSE"
@@ -176,8 +176,8 @@ KEYWORDS: dict[str,TokenType]={
     "qubit":TokenType.QUBIT,
     "measure":TokenType.MEASURE,
     "reset": TokenType.RESET,
-    "snapshot":TokenType.SNAPSHOT,
-    "restore":TokenType.RESTORE,
+    "freeze":TokenType.FREEZE,
+    "unfreeze":TokenType.UNFREEZE,
     "super":TokenType.SUPER,
     "pause":TokenType.PAUSE,
     "raise":TokenType.RAISE,

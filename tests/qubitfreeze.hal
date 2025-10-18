@@ -1,0 +1,27 @@
+fun main()
+    qubit q1;
+    qubit q2;
+    var shots = 0;
+
+    H(q1);
+    CNOT(q1, q2);
+    freeze s1;    
+
+    var r1 = measure q1;
+    var r2 = measure q2;
+    print("Measured: r1= ",r1," r2= ",r2," shots= ",shots);
+
+    X(q1);
+    X(q2);
+    shots = 42;
+    r1 = measure q1;
+    r2 = measure q2;
+    print("Changed: r1= ",r1," r2= ",r2," shots= ",shots);
+    unfreeze s1;     
+
+
+    r1 = measure q1;
+    r2 = measure q2;
+    print("After restore: r1= ",r1," r2= ",r2," shots= ",shots);
+    return 0;
+nuf

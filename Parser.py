@@ -4,7 +4,7 @@ from typing import Callable, Optional, List
 from enum import Enum,auto
 
 from AST import RaiseStatement, Statement,Expression,Program,FunctionStatement,ReturnStatement,BlockStatement,AssignStatement,PostfixExpression,LoadStatement,ArrayLiteral,NullLiteral,StructInstanceExpression,ClassStatement,ThisExpression,ForkStatement,QubitResetStatement,PauseStatement,ReactiveExpression
-from AST import ExpressionStatement, InfixExpression,IntegerLiteral,FloatLiteral,IdentifierLiteral,VarStatement, PrefixExpression, InputExpression,ArrayAccessExpression,StructStatement,StructAccessExpression,MemberStatement,BranchStatement,DoubleLiteral,SuperExpression,AsExpression, TimeLiteral
+from AST import ExpressionStatement, InfixExpression,IntegerLiteral,FloatLiteral,IdentifierLiteral,VarStatement, PrefixExpression, InputExpression,ArrayAccessExpression,StructStatement,StructAccessExpression,MemberStatement,BranchStatement,DoubleLiteral,SuperExpression,AsExpression, TimeLiteral,FreezeStatement,UnfreezeStatement
 from AST import BooleanLiteral,IfStatement,CallExpression,FunctionParameter,StringLiteral, WhileStatement,BreakStatement,ContinueStatement,ForStatement,ReserveCall,RefExpression,DerefExpression,RewindStatement, FastForwardStatement,MeasureExpression,QubitDeclarationStatement,CastExpression,AwaitExpression,SpawnExpression
 
 
@@ -96,6 +96,8 @@ class Parser:
             TokenType.REACTIVE: self.parse_reactive_expression,
             TokenType.SPAWN: self.parse_spawn_expression,
             TokenType.AWAIT: self.parse_await_expression,
+            TokenType.FREEZE: self.parse_freeze_statement,
+            TokenType.UNFREEZE: self.parse_unfreeze_statement,
 
         } 
         self.infix_parse_fns: dict[TokenType,Callable]={
@@ -197,6 +199,40 @@ class Parser:
         return double_lit
 
 
+    def parse_freeze_statement(self) -> FreezeStatement | None:
+        if not self.expect_peek(TokenType.IDENTIFIER):
+            self.errors.append("Expected an identifier (freeze name) after 'freeze'")
+            return None
+        
+        if self.current_token is None or self.current_token.literal is None:
+            self.errors.append("Invalid freeze name identifier.")
+            return None
+
+        name = IdentifierLiteral(value=self.current_token.literal)
+
+        if not self.expect_peek(TokenType.SEMICOLON):
+            self.errors.append("Expected ';' after freeze name.")
+           
+        return FreezeStatement(name=name)
+
+
+    def parse_unfreeze_statement(self) -> UnfreezeStatement | None:
+        if not self.expect_peek(TokenType.IDENTIFIER):
+            self.errors.append("Expected an identifier (freeze name) after 'restore'")
+            return None
+        
+        if self.current_token is None or self.current_token.literal is None:
+            self.errors.append("Invalid freeze name identifier.")
+            return None
+
+        name = IdentifierLiteral(value=self.current_token.literal)
+
+        if not self.expect_peek(TokenType.SEMICOLON):
+            self.errors.append("Expected ';' after restore name.")
+            
+            
+        return UnfreezeStatement(name=name)
+    
     def parse_spawn_expression(self) -> Expression | None:
         self.next_token() 
         expr = self.parse_expression(PrecedenceType.P_LOWEST)

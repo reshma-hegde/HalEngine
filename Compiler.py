@@ -4,7 +4,7 @@ import random
 from llvmlite import ir
 import os
 from AST import DoubleLiteral, Node,NodeType,Program, RaiseStatement,Statement,Expression, VarStatement,IdentifierLiteral,ReturnStatement,AssignStatement,CallExpression,InputExpression,NullLiteral, ClassStatement,ThisExpression,BranchStatement,ForkStatement,QubitDeclarationStatement,MeasureExpression
-from AST import ExpressionStatement,InfixExpression,IntegerLiteral,FloatLiteral, BlockStatement,FunctionStatement,IfStatement,BooleanLiteral,ArrayLiteral,RefExpression,DerefExpression,ReserveCall,RewindStatement, FastForwardStatement,SuperExpression,AsExpression,TimeLiteral,ReactiveExpression
+from AST import ExpressionStatement,InfixExpression,IntegerLiteral,FloatLiteral, BlockStatement,FunctionStatement,IfStatement,BooleanLiteral,ArrayLiteral,RefExpression,DerefExpression,ReserveCall,RewindStatement, FastForwardStatement,SuperExpression,AsExpression,TimeLiteral,ReactiveExpression,FreezeStatement, UnfreezeStatement
 from AST import FunctionParameter,StringLiteral,WhileStatement,BreakStatement,ContinueStatement,PrefixExpression,PostfixExpression,LoadStatement,ArrayAccessExpression, StructInstanceExpression,StructAccessExpression,StructStatement,QubitResetStatement,CastExpression,SpawnExpression,AwaitExpression
 from typing import List, cast
 from Environment import Environment
@@ -50,6 +50,9 @@ class Compiler:
 
         self.dependents: dict[str, list[str]] = {}
         self.reactive_vars: dict[str, Expression] = {}
+
+        self.snapshot_labels: dict[str, ir.Value] = {}
+        self.snapshot_qubit_states: dict[str, dict] = {}
 
         vector_type = self.module.context.get_identified_type("vector")
         vector_type.set_body(
@@ -387,6 +390,10 @@ class Compiler:
                 self.visit_assign_statement(cast(AssignStatement,node))
             case NodeType.IfStatement:
                 self.visit_if_statement(cast(IfStatement,node))
+            case NodeType.FreezeStatement:
+                self.visit_freeze_statement(cast(FreezeStatement, node))
+            case NodeType.UnfreezeStatement:
+                self.visit_unfreeze_statement(cast(UnfreezeStatement, node))
             case NodeType.WhileStatement:
                 self.visit_while_statement(cast(WhileStatement,node))
             case NodeType.ClassStatement:
@@ -495,6 +502,65 @@ class Compiler:
                     
                     if dependent_name in self.dependents:
                         queue.append(dependent_name)
+
+
+    def visit_freeze_statement(self, node: FreezeStatement) -> None:
+        if node.name.value is None:
+            self.report_error("Snapshot name is missing.")
+            return
+        
+        name: str = node.name.value
+
+        current_qubit_state_copy = {}
+        for q_name, q_state in self.qubits.items():
+            current_qubit_state_copy[q_name] = q_state.copy()
+        self.snapshot_qubit_states[name] = current_qubit_state_copy
+
+        if not self.is_in_main or not self.history_idx_ptr:
+            self.report_error("'snapshot' can only be used inside the 'main' function.")
+            return
+
+        current_idx_val = self.builder.load(self.history_idx_ptr, f"current_idx_for_{name}")
+        
+        snapshot_idx_ptr = self.builder.alloca(ir.IntType(32), name=f"snapshot_{name}_idx")
+        
+        self.builder.store(current_idx_val, snapshot_idx_ptr)
+        self.snapshot_labels[name] = snapshot_idx_ptr
+
+
+    def visit_unfreeze_statement(self, node: UnfreezeStatement) -> None:
+        if node.name.value is None:
+            self.report_error("Restore name is missing.")
+            return
+            
+        name: str = node.name.value
+
+        saved_qubit_state = self.snapshot_qubit_states.get(name)
+        if saved_qubit_state is None:
+            self.report_error(f"No snapshot named '{name}' found for qubit state.")
+            return
+        
+        self.qubits = saved_qubit_state
+        if not self.is_in_main or not self.history_idx_ptr or not self.history_len_ptr:
+            self.report_error("'restore' can only be used inside the 'main' function.")
+            return
+
+        snapshot_idx_ptr = self.snapshot_labels.get(name)
+        if snapshot_idx_ptr is None:
+            self.report_error(f"No snapshot named '{name}' found for classical state.")
+            return
+
+        target_idx_val = self.builder.load(snapshot_idx_ptr, name=f"restore_idx_for_{name}")
+
+        self._emit_restore_state(target_idx_val)
+        
+        self.builder.store(target_idx_val, self.history_idx_ptr)
+
+        if self.history_len_ptr:
+            new_len = self.builder.add(target_idx_val, ir.Constant(ir.IntType(32), 1))
+            self.builder.store(new_len, self.history_len_ptr)
+        
+
 
     def visit_branch_statement(self, node: BranchStatement) -> None:
         current_func = self.builder.function
@@ -905,8 +971,19 @@ class Compiler:
 
         value_ir, ir_type = resolved
 
-        if self.env.lookup(name) is not None:
-            self.report_error(f"Variable '{name}' is already defined in this scope.")
+        existing_entry = self.env.lookup(name)
+        if existing_entry is not None:
+            if node.value is None:
+                self.report_error(f"Re-declaration of '{name}' must have a value.")
+                return
+            
+            assign_node = AssignStatement(
+                ident=IdentifierLiteral(value=name),
+                operator="=",
+                right_value=node.value
+            )
+            self.visit_assign_statement(assign_node)
+            
             return
 
         if isinstance(ir_type, ir.PointerType) and isinstance(
@@ -1281,16 +1358,16 @@ class Compiler:
             elif isinstance(var_type, (ir.FloatType, ir.DoubleType)):
                 is_different = self.builder.fcmp_ordered('!=', orig_val, value, "is_val_different")
             
-        
+            self.builder.store(value, ptr)
+
             if is_different is not None:
+                
                 with self.builder.if_then(is_different):
-                    self.builder.store(value, ptr)
                     if self.is_in_main and name in self.history_vars:
                         self._emit_save_state()
                     if name in self.dependents:
                         self._trigger_updates_for(name)   
             else: 
-                self.builder.store(value, ptr)
                 if self.is_in_main and name in self.history_vars:
                     self._emit_save_state()
                 if name in self.dependents:
