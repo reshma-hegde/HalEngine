@@ -57,6 +57,8 @@ class NodeType(Enum):
     ReactiveExpression = "ReactiveExpression"
     SpawnExpression = "SpawnExpression"
     AwaitExpression = "AwaitExpression"
+    FreezeStatement = "FreezeStatement"
+    UnfreezeStatement = "UnfreezeStatement"
     
 
 
@@ -91,6 +93,33 @@ class Program(Node):
             "statements": [{stmt.type().value: stmt.json()} for stmt in self.statements]
         }
     
+class FreezeStatement(Statement):
+    def __init__(self, name: 'IdentifierLiteral') -> None:
+        self.name = name
+
+    def type(self) -> NodeType:
+        return NodeType.FreezeStatement
+
+    def json(self) -> dict:
+        return {
+            "type": self.type().value,
+            "name": self.name.json()
+        }
+
+
+class UnfreezeStatement(Statement):
+    def __init__(self, name: 'IdentifierLiteral') -> None:
+        self.name = name
+
+    def type(self) -> NodeType:
+        return NodeType.UnfreezeStatement
+
+    def json(self) -> dict:
+        return {
+            "type": self.type().value,
+            "name": self.name.json()
+        }
+      
 class SpawnExpression(Expression):
     def __init__(self, call: 'CallExpression') -> None:
         self.call = call
