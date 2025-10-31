@@ -5,8 +5,12 @@ fun main()
         print("Failed to open file for writing");
         return 0;
     fi
-
-    write(file_ptr, "Hello from Hal!\n");
+    
+    write(file_ptr, "First line\n");
+    write(file_ptr, "Hello from HalEngine!\n");
+    write(file_ptr, "This is the second one\n");
+    write(file_ptr, "Will this be read by the compiler?\n");
+    write(file_ptr, "Ah yes it did.\n");
 
     close(file_ptr);
 
@@ -19,6 +23,9 @@ fun main()
    
     var buffer = read_line(file_ptr);
     print("File content: ", buffer);
+
+    var buffers = read_lines(file_ptr);
+    print("File content: \n", buffers);
 
     close(file_ptr);
 

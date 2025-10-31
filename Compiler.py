@@ -143,6 +143,22 @@ class Compiler:
             )
             return ir.Function(self.module,fnty,'fopen')
 
+        def __init_fgetc()->ir.Function:
+            fnty:ir.FunctionType=ir.FunctionType(
+                self.type_map['int'], 
+                [self.type_map['file']],
+                var_arg=False
+            )
+            return ir.Function(self.module, fnty, 'fgetc')
+        
+        def __init_feof()->ir.Function:
+            fnty:ir.FunctionType=ir.FunctionType(
+                self.type_map['int'], 
+                [self.type_map['file']],
+                var_arg=False
+            )
+            return ir.Function(self.module, fnty, 'feof')
+        
         def __init_fclose()->ir.Function:
             
             fnty:ir.FunctionType=ir.FunctionType(
@@ -296,7 +312,8 @@ class Compiler:
         self.env.define('srand', __init_srand(), ir.VoidType())
         self.env.define('rand', __init_rand(), ir.IntType(32))
 
-
+        self.env.define('fgetc', __init_fgetc(), self.type_map['int'])
+        self.env.define('feof', __init_feof(), self.type_map['int'])
         self.env.define('atoi', __init_atoi(), ir.IntType(32))
         self.env.define('atof', __init_atof(), ir.DoubleType())
         self.env.define('sprintf', __init_sprintf(), ir.IntType(32))
@@ -1753,7 +1770,114 @@ class Compiler:
 
         self.builder.position_at_start(while_loop_otherwise)"""
 
-   
+    
+    def _read_lines_llvm_ir(self, file_ptr: ir.Value) -> ir.Value:
+        
+        fgetc_func, _ = self.env.lookup('fgetc') # type: ignore
+        feof_func, _ = self.env.lookup('feof') # type: ignore
+        realloc_func, _ = self.env.lookup('realloc') # type: ignore
+        malloc_func, _ = self.env.lookup('reserve') # type: ignore
+        
+        char_ptr_type = ir.IntType(8).as_pointer()
+        i32 = ir.IntType(32)
+        i8 = ir.IntType(8)
+        
+        initial_capacity = ir.Constant(i32, 1024)
+        resize_increment = ir.Constant(i32, 1024)
+        one = ir.Constant(i32, 1)
+        eof_constant = ir.Constant(i32, -1) 
+        
+        buffer_ptr = self.builder.alloca(char_ptr_type, name="buffer_ptr")
+        capacity_ptr = self.builder.alloca(i32, name="capacity_ptr")
+        length_ptr = self.builder.alloca(i32, name="length_ptr")
+        
+        char_storage_ptr = self.builder.alloca(i32, name="char_storage")
+        initial_buffer = self.builder.call(malloc_func, [initial_capacity], name="initial_buffer")
+        self.builder.store(initial_buffer, buffer_ptr)
+        self.builder.store(initial_capacity, capacity_ptr)
+        self.builder.store(ir.Constant(i32, 0), length_ptr)
+        
+        current_block = getattr(self.builder, "block", None)
+        if current_block is None or getattr(current_block, "parent", None) is None:
+            function = self.builder.function
+        else:
+            function = current_block.parent
+        
+        if function is None:
+            raise RuntimeError("IRBuilder has no active function to append loop blocks to.")
+        
+        loop_header = function.append_basic_block(name="read_loop_header")
+        loop_body = function.append_basic_block(name="read_loop_body")
+        resize_check = function.append_basic_block(name="resize_check")
+        resize_block = function.append_basic_block(name="resize_block")
+        store_block = function.append_basic_block(name="read_loop_store")
+        end_block = function.append_basic_block(name="read_loop_end")
+        
+        self.builder.branch(loop_header)
+        
+        self.builder.position_at_start(loop_header)
+        
+        feof_res = self.builder.call(feof_func, [file_ptr], name="feof_res")
+        
+        is_eof = self.builder.icmp_signed('!=', feof_res, ir.Constant(i32, 0), name="is_eof")
+        self.builder.cbranch(is_eof, end_block, loop_body)
+        
+        self.builder.position_at_start(loop_body)
+        char_val = self.builder.call(fgetc_func, [file_ptr], name="char_val")
+        self.builder.store(char_val, char_storage_ptr)
+
+        is_fgetc_eof = self.builder.icmp_signed('==', char_val, eof_constant, name="is_fgetc_eof")
+        
+        self.builder.cbranch(is_fgetc_eof, end_block, resize_check) 
+        
+        self.builder.position_at_start(resize_check)
+        
+        current_length = self.builder.load(length_ptr, name="current_len")
+        current_capacity = self.builder.load(capacity_ptr, name="current_cap")
+        
+        new_length = self.builder.add(current_length, one, name="tentative_len")
+        need_resize = self.builder.icmp_signed('>=', new_length, current_capacity, name="need_resize")
+        
+        self.builder.cbranch(need_resize, resize_block, store_block)
+        
+        self.builder.position_at_start(resize_block)
+        
+        old_buffer = self.builder.load(buffer_ptr, name="old_buffer")
+        new_capacity = self.builder.add(current_capacity, resize_increment, name="new_capacity")
+        
+        new_buffer = self.builder.call(realloc_func, [old_buffer, new_capacity], name="new_buffer")
+        
+        self.builder.store(new_buffer, buffer_ptr)
+        self.builder.store(new_capacity, capacity_ptr)
+        
+        self.builder.branch(store_block)
+        
+        self.builder.position_at_start(store_block)
+        
+        char_val_to_store = self.builder.load(char_storage_ptr, "char_val_to_store")
+        current_length_for_store = self.builder.load(length_ptr, "current_len_store")
+
+        final_buffer_base = self.builder.load(buffer_ptr, name="final_buffer_base")
+        
+        char_dest_ptr = self.builder.gep(final_buffer_base, [current_length_for_store], name="char_dest_ptr")
+        char_i8 = self.builder.trunc(char_val_to_store, i8, name="char_i8")
+        self.builder.store(char_i8, char_dest_ptr)
+        
+        updated_length = self.builder.add(current_length_for_store, one, name="updated_len")
+        self.builder.store(updated_length, length_ptr)
+
+        self.builder.branch(loop_header)
+
+        self.builder.position_at_start(end_block)
+        
+        final_buffer = self.builder.load(buffer_ptr, name="final_buffer")
+        final_length = self.builder.load(length_ptr, name="final_len_for_null")
+        
+        null_term_ptr = self.builder.gep(final_buffer, [final_length], name="null_term_ptr")
+        self.builder.store(ir.Constant(i8, 0), null_term_ptr)
+        
+        return final_buffer
+    
     def visit_infix_expression(self, node: InfixExpression) -> tuple[ir.Value, ir.Type] | None:
         operator: str = node.operator
 
@@ -2739,6 +2863,27 @@ class Compiler:
 
             
             return buffer_ptr, ret_type
+        
+        if isinstance(node.function, IdentifierLiteral) and node.function.value == 'read_lines':
+            if node.arguments is None or len(node.arguments) != 1:
+                return self.report_error("read_line() requires exactly one argument (a file pointer).")
+
+            if len(node.arguments) != 1:
+                self.report_error("read_lines() requires exactly one argument (a file pointer).")
+                return None
+            
+            arg_res = self.resolve_value(node.arguments[0])
+            if arg_res is None:
+                return None
+
+            file_ptr, file_ptr_type = arg_res
+            if not isinstance(file_ptr_type, ir.PointerType) or file_ptr_type != self.type_map['file']:
+                self.report_error("Argument to read_lines() must be a 'file' pointer.")
+                return None
+            
+            result_ptr = self._read_lines_llvm_ir(file_ptr)
+            return result_ptr, self.type_map['str']
+        
         if isinstance(node.function, StructAccessExpression):
             access_node = cast(StructAccessExpression, node.function)
             method_name = access_node.member_name.value
