@@ -1,14 +1,16 @@
-# HalEngine — A High-Level Programming Language
+# HalEngine - A High-Level Programming Language
 
 HalEngine is a high-level programming language and compiler designed to explore low-level control, multi-threading, LLVM IR generation, and modern programming features.
 
 ## Features
 
 - **Qubits and built-in quantum gates**
-- **Rewind and Fastforward** — Temporally revert or advance variable states
-- **Parallel Universe Model** — Execute alternate timelines of computation in isolation
+- **Rewind and Fastforward** - Temporally revert or advance variable states
+- **Parallel Universe Model** - Execute alternate timelines of computation in isolation
+- **Freeze and Unfreeze qubits** -Freezing and unfreezing the qubit state without affecting other measured values
 - **Time-scope variables and history retrieval**
-- **Reactive Variables** — Automatically update dependent computations
+- **Reactive Variables** - Automatically update dependent computations
+- **Multithreading**
 - **Automatic type inference**
 - **Complex number and vector handling**
 - **Sleep and timing constructs** (`sleep(500ms)` / `sleep(2s)`)
