@@ -11,6 +11,7 @@ HalEngine is a high-level programming language and compiler designed to explore 
 - **Time-scope variables and history retrieval**
 - **Reactive Variables** - Automatically update dependent computations
 - **Multithreading**
+- **Garbage Collection**
 - **Automatic type inference**
 - **Complex number and vector handling**
 - **Sleep and timing constructs** (`sleep(500ms)` / `sleep(2s)`)

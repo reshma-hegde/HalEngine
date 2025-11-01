@@ -281,6 +281,7 @@ class Compiler:
             fnty = ir.FunctionType(ir.IntType(32), [])
             return ir.Function(self.module, fnty, 'rand')
         
+        
         def __init_sleep()->ir.Function:
             fnty = ir.FunctionType(ir.VoidType(), [ir.IntType(32)])
             return ir.Function(self.module, fnty, 'Sleep')
@@ -311,7 +312,7 @@ class Compiler:
         self.env.define('time', __init_time(), ir.IntType(32))
         self.env.define('srand', __init_srand(), ir.VoidType())
         self.env.define('rand', __init_rand(), ir.IntType(32))
-
+        self.env.define('gc_collect', self.__init_gc_collect(), ir.VoidType())
         self.env.define('fgetc', __init_fgetc(), self.type_map['int'])
         self.env.define('feof', __init_feof(), self.type_map['int'])
         self.env.define('atoi', __init_atoi(), ir.IntType(32))
@@ -346,6 +347,18 @@ class Compiler:
 
         self.__define_print_vector_helper()
 
+    def __init_gc_collect(self)->ir.Function:
+            fnty:ir.FunctionType=ir.FunctionType(
+                ir.VoidType(),
+                [], 
+                var_arg=False
+            )
+            func = ir.Function(self.module, fnty, 'gc_collect_impl')
+            block = func.append_basic_block('entry')
+            builder = ir.IRBuilder(block)
+            builder.ret_void()
+            return func
+        
 
     
     def __initialize_math_builtins(self) -> None:
@@ -1454,11 +1467,21 @@ class Compiler:
             return
 
         elif isinstance(node.ident, ArrayAccessExpression):
-            array_result = self.resolve_value(node.ident.array)
-            if array_result is None:
-                self.errors.append("COMPILE ERROR: Cannot resolve array in assignment")
+            if not isinstance(node.ident.array, IdentifierLiteral):
+                self.errors.append("Dynamic array assignment only supported on direct variables.")
                 return
-            array_val, array_type = array_result
+            
+            array_name = node.ident.array.value
+            if array_name is None: 
+                self.errors.append("Array has no name.")
+                return
+
+            var_entry = self.env.lookup(array_name)
+            if var_entry is None:
+                self.errors.append(f"Array variable '{array_name}' not found.")
+                return
+            storage_ptr, array_type = var_entry 
+            array_val = self.builder.load(storage_ptr, name=f"{array_name}_val") 
 
             index_result = self.resolve_value(node.ident.index)
             if index_result is None:
@@ -1489,8 +1512,63 @@ class Compiler:
                 )
                 elem_type = array_type.pointee.element  # type: ignore
             elif isinstance(array_type, ir.PointerType) and isinstance(array_type.pointee, ir.IntType):  # type: ignore
+                element_type = array_type.pointee # type: ignore
+                
+                data_ptr_i8 = self.builder.bitcast(array_val, ir.IntType(8).as_pointer(), "data_ptr_as_i8")
+                header_offset = ir.Constant(ir.IntType(32), -4)
+                len_header_ptr_i8 = self.builder.gep(data_ptr_i8, [header_offset], inbounds=True, name="len_header_i8_ptr")
+                len_ptr = self.builder.bitcast(len_header_ptr_i8, ir.IntType(32).as_pointer(), name="len_ptr")
+                array_len = self.builder.load(len_ptr, "array_len_for_check")
+
+                
+                is_out_of_bounds = self.builder.icmp_signed('>=', index_val, array_len, "is_oob")
+
+                resize_block = self.builder.append_basic_block("array_resize")
+                continue_block = self.builder.append_basic_block("array_assign")
+                check_block = self.builder.block 
+                self.builder.cbranch(is_out_of_bounds, resize_block, continue_block)
+
+                
+                self.builder.position_at_start(resize_block)
+                new_size_val = self.builder.add(index_val, ir.Constant(ir.IntType(32), 1), "new_arr_size")
+                if isinstance(element_type, ir.IntType): element_size_bytes = element_type.width // 8
+                elif isinstance(element_type, ir.FloatType): element_size_bytes = 4
+                elif isinstance(element_type, ir.DoubleType): element_size_bytes = 8
+                else: element_size_bytes = 8 
+                element_size_llvm = ir.Constant(ir.IntType(32), element_size_bytes)
+                
+                new_data_size_bytes = self.builder.mul(new_size_val, element_size_llvm, "new_data_size")
+                header_size_llvm = ir.Constant(ir.IntType(32), 4)
+                total_new_size_bytes = self.builder.add(new_data_size_bytes, header_size_llvm, "total_new_size")
+
+                
+                realloc_func_res = self.env.lookup('realloc')
+                if realloc_func_res is None: 
+                    self.report_error("Internal error: C function 'realloc' not found for auto-resize.")
+                    self.builder.branch(continue_block) 
+                else:
+                    realloc_func, _ = realloc_func_res
+
+                    new_header_ptr_i8 = self.builder.call(realloc_func, [len_header_ptr_i8, total_new_size_bytes], "new_block_ptr")
+                    new_len_ptr = self.builder.bitcast(new_header_ptr_i8, ir.IntType(32).as_pointer(), "new_header_len_ptr")
+                    self.builder.store(new_size_val, new_len_ptr)
+                    
+                    new_data_ptr_i8 = self.builder.gep(new_header_ptr_i8, [header_size_llvm], name="new_data_i8_ptr", inbounds=True)
+                    new_typed_data_ptr = self.builder.bitcast(new_data_ptr_i8, array_val.type, "new_typed_data_ptr") # type: ignore
+
+                    self.builder.store(new_typed_data_ptr, storage_ptr)
+                    
+                    self.builder.branch(continue_block)
+                
+                resize_block_end = self.builder.block
+                self.builder.position_at_start(continue_block)
+                
+                current_array_val = self.builder.phi(array_val.type, "current_array_val")
+                current_array_val.add_incoming(array_val, check_block) 
+                current_array_val.add_incoming(new_typed_data_ptr, resize_block_end)
+
                 elem_ptr = self.builder.gep(
-                    array_val,
+                    current_array_val, 
                     [index_val],
                     inbounds=True,
                     name="array_elem_ptr",
@@ -4282,7 +4360,7 @@ class Compiler:
         self.builder = ir.IRBuilder(block)
         
         
-        self.env = Environment(parent=caller_env, name=mangled_name)
+        self.env = Environment(parent=global_env, name=mangled_name)
         
         for i, param_name in enumerate(param_names):
             if isinstance(param_types[i], ir.PointerType) and isinstance(param_types[i].pointee, ir.ArrayType):# type: ignore
