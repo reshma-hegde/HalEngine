@@ -201,6 +201,15 @@ class Compiler:
                 var_arg=True
             )
             return ir.Function(self.module,fnty,'scanf')
+        
+        def __init_strlen()->ir.Function:
+            fnty:ir.FunctionType=ir.FunctionType(
+                ir.IntType(32), # Returns a size_t, which we'll treat as i32
+                [ir.IntType(8).as_pointer()], # Takes a char*
+                var_arg=False
+            )
+            return ir.Function(self.module,fnty,'strlen')
+
 
         def __init_booleans()->tuple[ir.GlobalVariable,ir.GlobalVariable]:
             bool_type:ir.Type=self.type_map['bool']
@@ -326,7 +335,9 @@ class Compiler:
         self.env.define('close', __init_fclose(), self.type_map['int'])
         self.env.define('write', __init_fputs(), self.type_map['int'])
         self.env.define('read_line', __init_fgets(), ir.IntType(8).as_pointer())
-                
+                # ... inside __initialize_builtins ...
+        self.env.define('strlen', __init_strlen(), ir.IntType(32))
+            
         #print
         self.env.define('print',__init_print(),ir.IntType(32))
         self.env.define('input',__init_scanf(),ir.IntType(32))
@@ -4031,6 +4042,17 @@ class Compiler:
                 return None
 
             data_ptr, data_ptr_type = arg_resolved
+
+            if isinstance(data_ptr_type, ir.PointerType) and isinstance(data_ptr_type.pointee, ir.IntType) and data_ptr_type.pointee.width == 8: # type: ignore
+
+                strlen_func_res = self.env.lookup('strlen')
+                if strlen_func_res is None:
+                    self.report_error("Internal: 'strlen' C function not found.")
+                    return None
+                strlen_func, _ = strlen_func_res
+
+                str_len = self.builder.call(strlen_func, [data_ptr], "str_len")
+                return str_len, self.type_map['int']
 
             if isinstance(data_ptr_type, ir.PointerType):
                 data_ptr_i8 = self.builder.bitcast(data_ptr, ir.IntType(8).as_pointer(), "data_ptr_as_i8")
