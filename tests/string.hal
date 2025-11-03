@@ -1,3 +1,4 @@
+load "strings";
 fun main()
     
     print("Enter your name: ");
@@ -5,6 +6,8 @@ fun main()
 
     print("Enter your age: ");
     var age = input();
+
+    hello();
     
     print("Hello, ", name);
     print("You are ", age, " years old.");

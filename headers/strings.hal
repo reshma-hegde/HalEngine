@@ -1,4 +1,0 @@
-fun hello()
-    print("Hello from strings!\n");
-    return 0;
-nuf

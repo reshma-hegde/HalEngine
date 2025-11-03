@@ -2,7 +2,6 @@ load "math";
 
 fun main()
     var sum = add(5, 10);
-    print(k);
     var product = mul(2, 3);
     print("Sum: ", sum);
     print("Product: ", product);

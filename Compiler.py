@@ -13,8 +13,196 @@ from lexer import Lexer
 from Parser import Parser
 
 BUILTIN_HEADERS = {
-    
+    "math.hal": """
+fun add(var a, var b)
+    return a + b;
+nuf
+
+fun sub(var a, var b)
+    return a - b;
+nuf
+
+fun mul(var a, var b)
+    return a * b;
+nuf
+
+fun div(var a, var b)
+    return a / b;
+nuf
+
+fun mod(var a, var b)
+    return a % b;
+nuf
+
+fun max(var a, var b)
+    if a > b
+        return a;
+    fi
+    return b;
+nuf
+
+fun min(var a, var b)
+    if a < b
+        return a;
+    fi
+    return b;
+nuf
+
+fun abs(var a)
+    if a < 0
+        return -a;
+    fi
+    return a;
+nuf
+
+fun pow(var base, var exp)
+    var result = 1;
+    var i = 0;
+    while i < exp
+        result = result * base;
+        i = i + 1;
+    elihw
+    return result;
+nuf
+
+fun isEven(var a)
+    if a % 2 != 0
+        return 0;
+    fi
+    else
+        return 1;
+    esle
+nuf
+
+fun gcd(var a, var b)
+    while b != 0
+        var temp = b;
+        b = a % b;
+        a = temp;
+    elihw
+    return a;
+nuf
+
+fun addArray(array arr, var size)
+    var total = 0;
+    var i = 0;
+    while i < size
+        total = total + arr[i];
+        i = i + 1;
+    elihw
+    return total;
+nuf
+
+fun subArray(array arr, var size)
+    if size == 0 return 0; fi
+    var total = arr[0];
+    var i = 1;
+    while i < size
+        total = total - arr[i];
+        i = i + 1;
+    elihw
+    return total;
+nuf
+
+fun mulArray(array arr, var size)
+    var total = 1;
+    var i = 0;
+    while i < size
+        total = total * arr[i];
+        i = i + 1;
+    elihw
+    return total;
+nuf
+
+fun divArray(array arr, var size)
+    if size == 0 return 0; fi
+    var total = arr[0];
+    var i = 1;
+    while i < size
+        total = total / arr[i];
+        i = i + 1;
+    elihw
+    return total;
+nuf
+
+fun maxArray(array arr, var size)
+    var m = arr[0];
+    var i = 1;
+    while i < size
+        if arr[i] > m
+            m = arr[i];
+        fi
+        i = i + 1;
+    elihw
+    return m;
+nuf
+
+fun minArray(array arr, var size)
+    var m = arr[0];
+    var i = 1;
+    while i < size
+        if arr[i] < m
+            m = arr[i];
+        fi
+        i = i + 1;
+    elihw
+    return m;
+nuf
+
+fun gcdArray(array arr, var size)
+    if size == 0 return 0; fi
+    var result = arr[0];
+    var i = 1;
+    while i < size
+        var a = result;
+        var b = arr[i];
+        while b != 0
+            var temp = b;
+            b = a % b;
+            a = temp;
+        elihw
+        result = a;
+        i = i + 1;
+    elihw
+    return result;
+nuf
+
+fun insert(array arr, var length, var index, var value)
+    var i = length - 1;
+    while i >= index
+        arr[i + 1] = arr[i];
+        i = i - 1;
+    elihw
+    arr[index] = value;
+nuf
+""",
+
+    "stack.hal": """
+fun pop(array a)
+    var length = len(a);
+    if length == 0
+        print("Error: cannot pop from empty array");
+        return a;
+    fi
+    a = realloc(a, length - 1);
+    return a;
+nuf
+
+fun push(array a, var value)
+    var length = len(a);
+    a = realloc(a, length + 1);
+    a[length] = value;
+    return a;
+nuf
+""",
+"strings.hal": """
+fun hello()
+    print("Hello from strings!\\n");
+    return 0;
+nuf
+"""
 }
+
 
 
 class Compiler:
@@ -204,8 +392,8 @@ class Compiler:
         
         def __init_strlen()->ir.Function:
             fnty:ir.FunctionType=ir.FunctionType(
-                ir.IntType(32), # Returns a size_t, which we'll treat as i32
-                [ir.IntType(8).as_pointer()], # Takes a char*
+                ir.IntType(32), 
+                [ir.IntType(8).as_pointer()], 
                 var_arg=False
             )
             return ir.Function(self.module,fnty,'strlen')
@@ -335,7 +523,7 @@ class Compiler:
         self.env.define('close', __init_fclose(), self.type_map['int'])
         self.env.define('write', __init_fputs(), self.type_map['int'])
         self.env.define('read_line', __init_fgets(), ir.IntType(8).as_pointer())
-                # ... inside __initialize_builtins ...
+               
         self.env.define('strlen', __init_strlen(), ir.IntType(32))
             
         #print
@@ -4155,10 +4343,27 @@ class Compiler:
             
 
             if actual_type != expected_type:
-                if isinstance(expected_type, ir.FloatType) and isinstance(actual_type, ir.IntType):
-                    actual_val = self.builder.sitofp(actual_val, expected_type)
-                elif isinstance(expected_type, ir.IntType) and isinstance(actual_type, ir.FloatType):
-                    actual_val = self.builder.fptosi(actual_val, expected_type)
+                is_actual_numeric = isinstance(actual_type, (ir.IntType, ir.FloatType, ir.DoubleType))
+                is_expected_numeric = isinstance(expected_type, (ir.IntType, ir.FloatType, ir.DoubleType))
+
+                
+                if is_actual_numeric and is_expected_numeric:
+                    if isinstance(expected_type, ir.IntType):
+                        
+                        actual_val = self.builder.fptosi(actual_val, expected_type)
+                    elif isinstance(expected_type, ir.FloatType):
+                        if isinstance(actual_type, ir.IntType):
+                            
+                            actual_val = self.builder.sitofp(actual_val, expected_type)
+                        else: 
+                            actual_val = self.builder.fptrunc(actual_val, expected_type)
+                    elif isinstance(expected_type, ir.DoubleType):
+                        if isinstance(actual_type, ir.IntType):
+                            
+                            actual_val = self.builder.sitofp(actual_val, expected_type)
+                        else: 
+                            actual_val = self.builder.fpext(actual_val, expected_type)
+
 
                 elif isinstance(expected_type, ir.PointerType) and isinstance(actual_type, ir.PointerType):
                     zero = ir.Constant(ir.IntType(32), 0)
