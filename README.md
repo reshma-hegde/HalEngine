@@ -11,6 +11,7 @@ HalEngine is a high-level programming language and compiler designed to explore 
 - **Time-scope variables and history retrieval**
 - **Reactive Variables** - Automatically update dependent computations
 - **Multithreading**
+- **Platform Independent** - Works in Linux and Windows
 - **Garbage Collection**
 - **Automatic type inference**
 - **Complex number and vector handling**
@@ -23,13 +24,24 @@ HalEngine is a high-level programming language and compiler designed to explore 
 ## Running HalEngine
 
 You can run HalEngine on Windows using the provided executable:
-
 1. Open a terminal (Command Prompt or PowerShell).
 2. Navigate to the HalEngine directory containing `halengine.exe` and create a file with an extension .hal.
 3. Run a HalEngine program using:
 ```bash
 halengine.exe path\to\your\program.hal
 ```
+
+Add the exe file to the PATH
+Run a HalEngine program using:
+```bash
+halengine prgm1.hal
+```
+
+You can run HalEngine on Linux using the provided file:
+```bash
+halengine prgm1.hal
+```
+
 ## VS Code Extension
 
 Enhance your HalEngine programming experience with syntax highlighting, code snippets, and debugging support using the official HalEngine VS Code Extension:  
