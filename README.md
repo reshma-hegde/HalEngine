@@ -38,6 +38,17 @@ halengine prgm1.hal
 ```
 
 You can run HalEngine on Linux using the provided file:
+1. Download the given executable
+2. Move the downloaded file to /usr/bin
+  For example if you downloaded the file to ~/Downloads, run
+```bash
+sudo mv ~/Downloads/halengine /usr/bin/
+```
+Add execute permissions by running,
+```bash
+sudo chmod +x /usr/bin/halengine
+```
+Run a HalEngine program using:
 ```bash
 halengine prgm1.hal
 ```
@@ -136,7 +147,3 @@ nuf
 
 HalEngine is licensed under the GNU General Public License v3.0 (GPLv3).  
 See [LICENSE](LICENSE.md) for the full license text.
-
-
-
-
