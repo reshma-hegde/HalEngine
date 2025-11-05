@@ -52,7 +52,10 @@ Run a HalEngine program using:
 ```bash
 halengine prgm1.hal
 ```
-
+Verify the installation by running:
+```bash
+halengine -v
+```
 ## VS Code Extension
 
 Enhance your HalEngine programming experience with syntax highlighting, code snippets, and debugging support using the official HalEngine VS Code Extension:  
