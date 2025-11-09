@@ -17,7 +17,7 @@ HalEngine is a high-level programming language and compiler designed to explore 
 - **Complex number and vector handling**
 - **Sleep and timing constructs** (`sleep(500ms)` / `sleep(2s)`)
 - **Function return type inference**
-- **Nulify** - A variable forgets it's value and gains a hypocritical value
+- **Nullify** - A variable forgets it's value and gains a hypocritical value
 - **High-level print system** with support for arrays and vectors
 - **Fine-grained control flow** (`if ... fi`, `else ... esle`, `while ... elihw`)
 - **Support for arrays** (static and dynamic)
