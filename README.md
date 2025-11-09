@@ -33,6 +33,10 @@ halengine.exe path\to\your\program.hal
 ```
 
 Add the exe file to the PATH
+Verify the installation by running:
+```bash
+halengine -v
+```
 Run a HalEngine program using:
 ```bash
 halengine prgm1.hal
@@ -49,14 +53,15 @@ Add execute permissions by running,
 ```bash
 sudo chmod +x /usr/bin/halengine
 ```
-Run a HalEngine program using:
-```bash
-halengine prgm1.hal
-```
 Verify the installation by running:
 ```bash
 halengine -v
 ```
+Run a HalEngine program using:
+```bash
+halengine prgm1.hal
+```
+
 ## VS Code Extension
 
 Enhance your HalEngine programming experience with syntax highlighting, code snippets, and debugging support using the official HalEngine VS Code Extension:  
