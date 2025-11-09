@@ -1,0 +1,11 @@
+fun create_ref()
+    var x = 10;
+    var p = ref(x);
+    return p;  
+nuf
+
+fun main()
+    var ptr = create_ref();   
+    print(deref(ptr));        
+    return 0;
+nuf
