@@ -3,7 +3,7 @@ from Token import Token, TokenType
 from typing import Callable, Optional, List
 from enum import Enum,auto
 
-from AST import RaiseStatement, Statement,Expression,Program,FunctionStatement,ReturnStatement,BlockStatement,AssignStatement,PostfixExpression,LoadStatement,ArrayLiteral,NullLiteral,StructInstanceExpression,ClassStatement,ThisExpression,ForkStatement,QubitResetStatement,PauseStatement,ReactiveExpression
+from AST import RaiseStatement, Statement,Expression,Program,FunctionStatement,ReturnStatement,BlockStatement,AssignStatement,PostfixExpression,LoadStatement,ArrayLiteral,NullLiteral,StructInstanceExpression,ClassStatement,ThisExpression,ForkStatement,QubitResetStatement,PauseStatement,ReactiveExpression,NullifyStatement
 from AST import ExpressionStatement, InfixExpression,IntegerLiteral,FloatLiteral,IdentifierLiteral,VarStatement, PrefixExpression, InputExpression,ArrayAccessExpression,StructStatement,StructAccessExpression,MemberStatement,BranchStatement,DoubleLiteral,SuperExpression,AsExpression, TimeLiteral,FreezeStatement,UnfreezeStatement
 from AST import BooleanLiteral,IfStatement,CallExpression,FunctionParameter,StringLiteral, WhileStatement,BreakStatement,ContinueStatement,ForStatement,ReserveCall,RefExpression,DerefExpression,RewindStatement, FastForwardStatement,MeasureExpression,QubitDeclarationStatement,CastExpression,AwaitExpression,SpawnExpression
 
@@ -98,6 +98,7 @@ class Parser:
             TokenType.AWAIT: self.parse_await_expression,
             TokenType.FREEZE: self.parse_freeze_statement,
             TokenType.UNFREEZE: self.parse_unfreeze_statement,
+            TokenType.NULLIFY: self.parse_nullify_statement,
 
         } 
         self.infix_parse_fns: dict[TokenType,Callable]={
@@ -330,6 +331,8 @@ class Parser:
                 return self.parse_fork_statement()
             case TokenType.IF:
                 return self.parse_if_statement()
+            case TokenType.NULLIFY:
+                return self.parse_nullify_statement()
             case TokenType.WHILE:
                 return self.parse_while_statement()
             case TokenType.QUBIT:
@@ -368,6 +371,21 @@ class Parser:
                     
                 return ExpressionStatement(expr=expr)
 
+    def parse_nullify_statement(self) -> NullifyStatement | None:
+        if not self.expect_peek(TokenType.IDENTIFIER):
+            self.errors.append("Expected an identifier (variable name) after 'nullify'")
+            return None
+        
+        if self.current_token is None or self.current_token.literal is None:
+            self.errors.append("Invalid variable name identifier.")
+            return None
+
+        name = IdentifierLiteral(value=self.current_token.literal)
+
+        if not self.expect_peek(TokenType.SEMICOLON):
+            self.errors.append("Expected ';' after variable name in nullify statement.")
+           
+        return NullifyStatement(name=name)
     
     def parse_typed_var_statement(self) -> VarStatement | None:
         stmt = VarStatement()

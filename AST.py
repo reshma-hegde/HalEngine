@@ -59,6 +59,7 @@ class NodeType(Enum):
     AwaitExpression = "AwaitExpression"
     FreezeStatement = "FreezeStatement"
     UnfreezeStatement = "UnfreezeStatement"
+    NullifyStatement = "NullifyStatement"
     
 
 
@@ -92,7 +93,20 @@ class Program(Node):
             "type": self.type().value,
             "statements": [{stmt.type().value: stmt.json()} for stmt in self.statements]
         }
-    
+
+class NullifyStatement(Statement):
+    def __init__(self, name: 'IdentifierLiteral') -> None:
+        self.name = name
+
+    def type(self) -> NodeType:
+        return NodeType.NullifyStatement
+
+    def json(self) -> dict:
+        return {
+            "type": self.type().value,
+            "name": self.name.json()
+        }
+     
 class FreezeStatement(Statement):
     def __init__(self, name: 'IdentifierLiteral') -> None:
         self.name = name

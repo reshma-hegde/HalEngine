@@ -5,7 +5,7 @@ from llvmlite import ir
 import os
 from AST import DoubleLiteral, Node,NodeType,Program, RaiseStatement,Statement,Expression, VarStatement,IdentifierLiteral,ReturnStatement,AssignStatement,CallExpression,InputExpression,NullLiteral, ClassStatement,ThisExpression,BranchStatement,ForkStatement,QubitDeclarationStatement,MeasureExpression
 from AST import ExpressionStatement,InfixExpression,IntegerLiteral,FloatLiteral, BlockStatement,FunctionStatement,IfStatement,BooleanLiteral,ArrayLiteral,RefExpression,DerefExpression,ReserveCall,RewindStatement, FastForwardStatement,SuperExpression,AsExpression,TimeLiteral,ReactiveExpression,FreezeStatement, UnfreezeStatement
-from AST import FunctionParameter,StringLiteral,WhileStatement,BreakStatement,ContinueStatement,PrefixExpression,PostfixExpression,LoadStatement,ArrayAccessExpression, StructInstanceExpression,StructAccessExpression,StructStatement,QubitResetStatement,CastExpression,SpawnExpression,AwaitExpression
+from AST import FunctionParameter,StringLiteral,WhileStatement,BreakStatement,ContinueStatement,PrefixExpression,PostfixExpression,LoadStatement,ArrayAccessExpression, StructInstanceExpression,StructAccessExpression,StructStatement,QubitResetStatement,CastExpression,SpawnExpression,AwaitExpression,NullifyStatement
 from typing import List, cast
 from Environment import Environment
 from typing import Optional
@@ -215,6 +215,7 @@ class Compiler:
         self.struct_layouts: dict[str, dict[str, int]] = {}
         self.class_methods: dict[str, list[str]] = {}
         self.class_parents: dict[str, str] = {}
+        self.nullified_vars: set[str] = set()
         self.task_return_types: dict[str, ir.Type] = {}
         self.type_map:dict[str,ir.Type]={
             'int':ir.IntType(32),
@@ -603,6 +604,8 @@ class Compiler:
                 self.visit_qubit_reset(cast(QubitResetStatement, node))
             case NodeType.VarStatement:
                 self.visit_var_statement(cast(VarStatement,node))
+            case NodeType.NullifyStatement: 
+                self.visit_nullify_statement(cast(NullifyStatement, node)) 
             case NodeType.ForkStatement:
                 self.visit_fork_statement(cast(ForkStatement, node))
             case NodeType.InfixExpression:
@@ -732,6 +735,40 @@ class Compiler:
                     if dependent_name in self.dependents:
                         queue.append(dependent_name)
 
+    def visit_nullify_statement(self, node: NullifyStatement) -> None:
+        if node.name.value is None:
+            self.report_error("Nullify statement is missing a variable name.")
+            return
+
+        name: str = node.name.value
+        entry = self.env.lookup(name)
+
+        if entry is None:
+            self.report_error(f"Cannot nullify undeclared variable '{name}'.")
+            return
+        
+        var_ptr, var_type = entry
+
+        self.nullified_vars.add(name)
+       
+        null_value: ir.Value
+        if isinstance(var_type, ir.PointerType):
+            null_value = ir.Constant(var_type, None)
+        elif isinstance(var_type, ir.IntType):
+            null_value = ir.Constant(var_type, 0)
+        elif isinstance(var_type, (ir.FloatType, ir.DoubleType)):
+            null_value = ir.Constant(var_type, 0.0)
+        else:
+            self.report_error(f"Cannot nullify variable '{name}' of unsupported type: {var_type}")
+            return
+
+        self.builder.store(null_value, var_ptr)
+
+        if name in self.dependents:
+            self._trigger_updates_for(name)
+        
+        if self.is_in_main and name in self.history_vars:
+            self._emit_save_state()
 
     def visit_freeze_statement(self, node: FreezeStatement) -> None:
         if node.name.value is None:
@@ -1465,6 +1502,8 @@ class Compiler:
             if name is None:
                 self.report_error("none error")
                 return 
+            if name in self.nullified_vars:
+                self.nullified_vars.remove(name)
             if isinstance(node.right_value, AwaitExpression):
                 resolved = self.visit_await_expression(node.right_value)
                 if resolved is None:
@@ -3975,8 +4014,15 @@ class Compiler:
 
             printf_func, _ = self.env.lookup("print") # type: ignore
             zero = ir.Constant(ir.IntType(32), 0)
+            hypocrisy_str_fmt, _ = self.convert_string("hypocritic")
+            hypocrisy_str_ptr = self.builder.gep(hypocrisy_str_fmt, [zero, zero], inbounds=True)
+            s_fmt_g, _ = self.convert_string("%s")
+            s_fmt_p = self.builder.gep(s_fmt_g, [zero, zero], inbounds=True)
 
             for arg_expr in params:
+                if isinstance(arg_expr, IdentifierLiteral) and arg_expr.value in self.nullified_vars:
+                    self.builder.call(printf_func, [s_fmt_p, hypocrisy_str_ptr])
+                    continue
                 result = self.resolve_value(arg_expr)
                 if result is None:
                     self.report_error("Failed to resolve print argument.")

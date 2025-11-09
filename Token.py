@@ -108,7 +108,7 @@ class TokenType(Enum):
     TIME="TIME"
     REACTIVE="REACTIVE"
     SPAWN="SPAWN"
-    
+    NULLIFY="NULLIFY"
 
     
     TYPE="TYPE"
@@ -183,7 +183,8 @@ KEYWORDS: dict[str,TokenType]={
     "raise":TokenType.RAISE,
     "as":TokenType.AS,
     "reactive":TokenType.REACTIVE,
-    "spawn":TokenType.SPAWN
+    "spawn":TokenType.SPAWN,
+    "nullify":TokenType.NULLIFY,
     
     #"file":TokenType.FILE,
     

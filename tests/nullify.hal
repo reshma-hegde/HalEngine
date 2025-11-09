@@ -1,0 +1,10 @@
+fun main()
+    var x = 42;
+    print("x = ",x);        
+
+    nullify x; @intentional amnesia  
+    print("x = ",x);         
+
+    x = 99;          
+    print("x = ",x);        
+nuf
